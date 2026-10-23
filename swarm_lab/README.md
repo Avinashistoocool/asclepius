@@ -39,3 +39,20 @@ The previous chord-bisection solver lives in `legacy/` for reference.
 ```powershell
 py -m unittest test_medial -v
 ```
+
+## Swarm sweep comparison (`/compare`)
+
+Each planner defines an arrival time over the field; the formation at time t is the
+front where arrival = t. Drones are spaced evenly along the front, so per-drone swath
+(altitude) = front length / drones in that piece. Multiple front pieces = a split.
+
+| Planner | Idea |
+| --- | --- |
+| MAT + chord | Rigid line on the perpendicular chord of the medial trunk |
+| Lawnmower | Straight line along the principal axis; splits around concavities |
+| Harmonic | Level sets of a Laplace solution between the two trunk end caps |
+| Geodesic | Wavefront of shortest-path distance from the start cap |
+
+Metrics: coverage, peak swath, mission length (fastest drone), max sub-swarms,
+speed spread, and MAT chord folds (where consecutive chords cross).
+

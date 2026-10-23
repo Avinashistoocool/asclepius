@@ -9,6 +9,7 @@ import threading
 from urllib.parse import urlsplit
 
 from medial_axis import Cancelled, analyze
+from sweep import compare
 
 
 ROOT = Path(__file__).resolve().parent
@@ -33,13 +34,15 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/":
             self.send_data(200, (ROOT / "index.html").read_bytes(), "text/html; charset=utf-8")
+        elif path == "/compare":
+            self.send_data(200, (ROOT / "compare.html").read_bytes(), "text/html; charset=utf-8")
         elif path == "/health":
             self.send_data(200, {"status": "ok"})
         else:
             self.send_data(404, {"error": "Not found."})
 
     def do_POST(self):
-        if self.path != "/api/analyze":
+        if self.path not in ("/api/analyze", "/api/compare"):
             self.send_data(404, {"error": "Not found."})
             return
         origin = self.headers.get("Origin")
@@ -76,8 +79,12 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             report = lambda fraction, message: emit({"type": "progress", "fraction": fraction, "message": message})
-            result = analyze(payload.get("points"), payload.get("resolution", 240),
-                             payload.get("prune", .05), payload.get("extend", True), progress=report)
+            if self.path == "/api/compare":
+                result = compare(payload.get("points"), payload.get("drones", 12),
+                                 prune=payload.get("prune", .05), progress=report)
+            else:
+                result = analyze(payload.get("points"), payload.get("resolution", 240),
+                                 payload.get("prune", .05), payload.get("extend", True), progress=report)
             emit({"type": "result", "data": result})
         except Cancelled:
             logging.info("Browser disconnected during computation.")

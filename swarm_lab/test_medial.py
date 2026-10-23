@@ -52,5 +52,6 @@ class MedialAxisTests(unittest.TestCase):
                 analyze(**kwargs)
 
 
+
 if __name__ == "__main__":
     unittest.main()
