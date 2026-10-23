@@ -1,4 +1,4 @@
-"""Numerical checks for the derivations in coverage_theory.md, plus the figures.
+"""Numerical checks for the equations in coverage_theory.md.
 
 Run from the repository root:  py paper/verify_derivations.py
 """
@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "swarm_lab"))
 
 
 from medial_axis import analyze as medial  # noqa: E402
-from sweep import Grid, end_caps, geodesic_field, harmonic_field, lawnmower_field, mat_field  # noqa: E402
+from sweep import Grid, end_caps, geodesic_field, harmonic_field  # noqa: E402
 
 RESULTS = []
 
@@ -57,8 +57,8 @@ for _ in range(200):
     turned = lambda s: np.array([np.cos(angle + s), np.sin(angle + s)])
     fd_n = (ellipse_hit(p, turned(h)) - ellipse_hit(p, turned(-h))) / (2 * h)
     worst_n = max(worst_n, abs(fd_n - (-d * (nu @ t) / (nu @ n))))
-report("ray-hit derivative w.r.t. position, eq. (3.4)", worst_p, 1e-5)
-report("ray-hit derivative w.r.t. direction, eq. (3.5)", worst_n, 1e-4)
+report("ray-hit derivative w.r.t. position, eq. (5)", worst_p, 1e-5)
+report("ray-hit derivative w.r.t. direction, eq. (5)", worst_n, 1e-4)
 
 
 # ---------------------------------------------------------------- 2. tangential Euler-Lagrange identity
@@ -80,7 +80,7 @@ kappa = np.gradient(np.unwrap(np.arctan2(T[:, 1], T[:, 0])), arc)
 fv = np.array([f(p, n) for p, n in zip(curve, N)])
 gv = np.array([t @ grad(lambda m: f(p, m), n) for p, n, t in zip(curve, N, T)])
 gp = np.array([t @ grad(lambda q: f(q, n), p) for p, n, t in zip(curve, N, T)])
-report("tangential E-L identity, eq. (3.9)", float(np.max(np.abs(np.gradient(fv, arc) + kappa * gv - gp)[50:-50])), 1e-4)
+report("tangential E-L identity, eq. (4)", float(np.max(np.abs(np.gradient(fv, arc) + kappa * gv - gp)[50:-50])), 1e-4)
 
 
 # ---------------------------------------------------------------- 3. boundary-pair ODE
@@ -120,7 +120,7 @@ w = np.array([pair_field(0, y) for y in zip(u, v)]).T
 velocity = .5 * (gamma_d(u) * w[0] + gamma_d(v) * w[1])
 chord = gamma(v) - gamma(u)
 cosine = np.abs(np.sum(velocity * chord, axis=0)) / np.linalg.norm(velocity, axis=0) / np.linalg.norm(chord, axis=0)
-report("pair ODE keeps chord perpendicular to midpoint velocity, eq. (4.2)", float(np.max(cosine)), 1e-9)
+report("pair ODE keeps chord perpendicular to midpoint velocity, eq. (8)", float(np.max(cosine)), 1e-9)
 dm = np.diff((gamma(u) + gamma(v)) / 2, axis=1)
 mid_chord = (chord[:, :-1] + chord[:, 1:]) / 2
 drift = np.abs(np.sum(dm * mid_chord, axis=0)) / np.linalg.norm(dm, axis=0) / np.linalg.norm(mid_chord, axis=0)
@@ -141,7 +141,7 @@ mask = grid.mask
 pad = np.pad(mask, 1)
 interior = mask & pad[:-2, 1:-1] & pad[2:, 1:-1] & pad[1:-1, :-2] & pad[1:-1, 2:]
 lap = 4 * H[1:-1, 1:-1] - H[:-2, 1:-1] - H[2:, 1:-1] - H[1:-1, :-2] - H[1:-1, 2:]
-report("discrete Laplace residual of the harmonic field, eq. (5.3)", float(np.nanmax(np.abs(lap[interior[1:-1, 1:-1]]))), 1e-9)
+report("discrete Laplace residual of the harmonic field, eq. (11)", float(np.nanmax(np.abs(lap[interior[1:-1, 1:-1]]))), 1e-9)
 
 edges = []
 for dr, dc in ((1, 0), (0, 1)):
@@ -169,53 +169,8 @@ G = geodesic_field(grid, caps)
 gy, gx = np.gradient(np.where(mask, G, np.nan), grid.spacing)
 slope = np.hypot(gx, gy)[interior]
 slope = slope[np.isfinite(slope)]
-report("eikonal |grad T| is constant, eq. (5.6): relative IQR", float(np.subtract(*np.percentile(slope, [75, 25])) / np.median(slope)), .1)
+report("eikonal |grad T| is constant, eq. (12): relative IQR", float(np.subtract(*np.percentile(slope, [75, 25])) / np.median(slope)), .1)
 
 print(f"\n{sum(RESULTS)}/{len(RESULTS)} checks passed")
 
-
-# ---------------------------------------------------------------- figures
-import matplotlib  # noqa: E402
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-
-out = os.path.join(HERE, "figures")
-os.makedirs(out, exist_ok=True)
-plt.rcParams.update({"font.size": 9, "axes.titlesize": 10})
-fields = [("MAT + chord", mat_field(grid, polygon, mat["path"])[0]), ("Lawnmower (PCA)", lawnmower_field(grid, polygon)),
-          ("Harmonic  $\\Delta T = 0$", H), ("Geodesic  $|\\nabla T| = c$", G)]
-fig, axes = plt.subplots(1, 4, figsize=(13, 3.6))
-for ax, (title, field) in zip(axes, fields):
-    shown = np.where(mask & np.isfinite(field), field, np.nan)
-    ax.imshow(shown, origin="upper", cmap="viridis", extent=(0, 600, 600, 0))
-    ax.contour(grid.xy[..., 0], grid.xy[..., 1], np.where(np.isfinite(shown), shown, -1),
-               levels=np.linspace(.05, .95, 13), colors="white", linewidths=.7)
-    ax.plot(*np.vstack((polygon, polygon[:1])).T, "k", lw=1.2)
-    ax.plot(*np.asarray(mat["path"]).T, "--", color="#10b981", lw=1)
-    ax.set_title(title)
-    ax.set_xticks([]), ax.set_yticks([])
-    ax.set_xlim(60, 540), ax.set_ylim(540, 60)
-fig.suptitle("Arrival-time fields $T(x)$ and fronts $\\{T = t\\}$ on one field; dashed: medial trunk", y=.99)
-fig.tight_layout()
-fig.savefig(os.path.join(out, "fig1_fields.png"), dpi=160)
-
-fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 4.2))
-theta = np.linspace(0, 2 * np.pi, 400)
-a1.plot(A * np.cos(theta), B * np.sin(theta), "k", lw=1)
-for start in np.linspace(.25, 2.9, 6):
-    u, v = trace_pairs(start)
-    a1.plot(*((gamma(u) + gamma(v)) / 2), lw=1.4)
-    k = len(u) // 3
-    a1.plot(*np.c_[gamma(u[k]), gamma(v[k])], ":", color="gray", lw=.8)
-a1.set_aspect("equal"), a1.set_title("Bisector curves of eq. (4.3) on an ellipse")
-a1.set_xticks([]), a1.set_yticks([])
-uu, vv = np.meshgrid(np.linspace(0, 2 * np.pi, 29), np.linspace(0, 2 * np.pi, 29))
-W = np.array([pair_field(0, (a, b)) if abs(a - b) > 1e-6 else (0, 0) for a, b in zip(uu.ravel(), vv.ravel())])
-a2.quiver(uu, vv, W[:, 0].reshape(uu.shape), W[:, 1].reshape(uu.shape), angles="xy", pivot="mid", scale=40, width=.003)
-a2.plot([0, 2 * np.pi], [0, 2 * np.pi], "r", lw=1, label="$u = v$ (degenerate chord)")
-a2.set_xlabel("$u$"), a2.set_ylabel("$v$"), a2.set_title("Line field on the torus of boundary pairs")
-a2.legend(loc="upper left", fontsize=8)
-fig.tight_layout()
-fig.savefig(os.path.join(out, "fig2_pair_ode.png"), dpi=160)
-print(f"figures written to {out}")
 sys.exit(0 if all(RESULTS) else 1)
