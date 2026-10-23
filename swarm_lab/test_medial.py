@@ -76,6 +76,18 @@ class ComplexityTests(unittest.TestCase):
             self.assertLess(np.count_nonzero(lanes == -1), 20, name)
             self.assertEqual(len(method["drones"]), 8)
 
+    def test_nadir_images_every_cell(self):
+        from sweep import compare
+        for polygon in (blob(5), preset_boundary({"kind": "star", "depth": .55, "arms": 5})):
+            result = compare(polygon.tolist(), drones=6, hfov=60, vfov=45, overlap=.1)
+            for name, method in result["methods"].items():
+                self.assertEqual(method["stats"]["gapCells"], 0, name)
+                self.assertEqual(method["stats"]["cameraCoverage"], 100.0, name)
+                imaged = np.asarray(method["imaged"]["values"])
+                self.assertFalse(np.any(imaged == 0), name)
+                for drone in method["drones"]:
+                    self.assertEqual(len(drone["heading"]), len(drone["path"]))
+                    self.assertTrue(all(a > 0 for a in drone["altitude"]))
 
 
 if __name__ == "__main__":

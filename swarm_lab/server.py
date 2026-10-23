@@ -81,7 +81,9 @@ class Handler(BaseHTTPRequestHandler):
             report = lambda fraction, message: emit({"type": "progress", "fraction": fraction, "message": message})
             if self.path == "/api/compare":
                 result = compare(payload.get("points"), payload.get("drones", 12),
-                                 prune=payload.get("prune", .05), progress=report)
+                                 prune=payload.get("prune", .05), hfov=payload.get("hfov", 70.),
+                                 vfov=payload.get("vfov", 55.), overlap=payload.get("overlap", .1),
+                                 progress=report)
             else:
                 result = analyze(payload.get("points"), payload.get("resolution", 240),
                                  payload.get("prune", .05), payload.get("extend", True), progress=report)

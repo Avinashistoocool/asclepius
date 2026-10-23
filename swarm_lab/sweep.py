@@ -25,6 +25,7 @@ from skimage.measure import find_contours
 
 from boundary import intersection_parameters, validate_polygon
 from complexity import describe
+from nadir import plan as nadir_plan
 from medial_axis import analyze as medial_analyze, resample
 
 METHODS = {
@@ -254,7 +255,7 @@ def drone_positions(oriented, drones):
     return positions
 
 
-def summarize(grid, field, frames_fronts, drones, levels):
+def summarize(grid, field, frames_fronts, drones, levels, camera):
     covered = np.isfinite(field) & grid.mask
     coverage = np.count_nonzero(covered) / np.count_nonzero(grid.mask)
     filled = np.where(covered, field, np.nanmean(field[covered]) if np.any(covered) else 0.)
@@ -268,6 +269,7 @@ def summarize(grid, field, frames_fronts, drones, levels):
     paths = [np.array([frame[i][:2] for frame in positions if frame is not None]).reshape(-1, 2)
              for i in range(drones)]
     cell = grid.spacing ** 2
+    plans, hits, camera_stats = nadir_plan(grid, lanes, paths, **camera)
     per_drone = []
     for i, path in enumerate(paths):
         steps = np.linalg.norm(np.diff(path, axis=0), axis=1) if len(path) > 1 else np.zeros(0)
@@ -277,7 +279,11 @@ def summarize(grid, field, frames_fronts, drones, levels):
             "area": round(float(np.count_nonzero(lanes == i) * cell), 1),
             "length": round(float(steps[~jumps].sum()), 1),
             "transits": int(np.count_nonzero(jumps)),
+            "heading": np.degrees(np.arctan2(plans[i]["heading"][:, 1], plans[i]["heading"][:, 0])).round(1).tolist(),
+            "altitude": plans[i]["altitude"].round(2).tolist(),
+            "maxAltitude": round(float(plans[i]["altitude"].max()), 1) if len(path) else 0.,
         })
+    frame_of = np.cumsum([frame is not None for frame in positions]) - 1
     areas = np.array([d["area"] for d in per_drone])
     frames, mission, spreads = [], 0., []
     peak_swath, max_split, starved_frames, lengths = 0., 0, 0, []
@@ -285,7 +291,9 @@ def summarize(grid, field, frames_fronts, drones, levels):
     for k, (level, components) in enumerate(zip(levels, frames_fronts)):
         placed, swath, starved = place_drones(components, drones)
         if positions[k] is not None:
-            placed = positions[k]
+            j = frame_of[k]
+            placed = [[x, y, s, per_drone[i]["heading"][j], per_drone[i]["altitude"][j]]
+                      for i, (x, y, s) in enumerate(positions[k])]
         peak_swath = max(peak_swath, swath)
         max_split = max(max_split, len(components))
         starved_frames += starved > 0
@@ -311,7 +319,8 @@ def summarize(grid, field, frames_fronts, drones, levels):
         "areaBalance": round(float(areas.min() / max(areas.max(), 1e-9)), 2),
         "longestDronePath": round(max(d["length"] for d in per_drone), 1),
         "transits": int(sum(d["transits"] for d in per_drone)),
-    }, per_drone, lanes
+        **camera_stats,
+    }, per_drone, lanes, hits
 
 
 def level_fronts(grid, field, levels):
@@ -334,10 +343,16 @@ def lane_image(lanes, step=2):
     return {"width": image.shape[1], "height": image.shape[0], "values": image.ravel().tolist()}
 
 
-def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
+def compare(points, drones=12, size=200, prune=.05, hfov=70., vfov=55., overlap=.1,
+            progress=lambda f, m: None):
     started = time.perf_counter()
     if isinstance(drones, bool) or not isinstance(drones, int) or not 2 <= drones <= 64:
         raise ValueError("Drone count must be an integer from 2 to 64.")
+    for name, value, low, high in (("Horizontal FOV", hfov, 10, 150), ("Vertical FOV", vfov, 10, 150),
+                                   ("Overlap", overlap, 0, 1)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+            raise ValueError(f"{name} must be between {low} and {high}.")
+    camera = {"hfov": float(hfov), "vfov": float(vfov), "overlap": float(overlap)}
     polygon = validate_polygon(points)
     progress(.02, "Computing medial axis for the trunk and end caps")
     medial = medial_analyze(polygon.tolist(), prune=prune, progress=lambda f, m: progress(.02 + .13 * f, "MAT: " + m))
@@ -381,15 +396,15 @@ def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
 
     output = {}
     for k, (name, (field, fronts)) in enumerate(results.items()):
-        progress(.85 + .13 * k / len(results), f"Scoring {METHODS[name]}")
-        frames, stats, per_drone, lanes = summarize(grid, field, fronts, drones, levels)
+        progress(.82 + .16 * k / len(results), f"Nadir camera plan + coverage check: {METHODS[name]}")
+        frames, stats, per_drone, lanes, hits = summarize(grid, field, fronts, drones, levels, camera)
         stats["folds"] = 0.
         stats["computeMs"] = round(1000 * timings[name])
         if name == "mat":
             stats.update(mat_extra)
         output[name] = {"label": METHODS[name], "frames": frames, "stats": stats,
                         "coverage": coverage_image(field, grid.mask), "drones": per_drone,
-                        "lanes": lane_image(lanes)}
+                        "lanes": lane_image(lanes), "imaged": lane_image(np.where(grid.mask, hits, -2))}
     progress(1., "Done")
     samples = caps[0]
     return {
@@ -399,6 +414,7 @@ def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
         "end": samples[caps[4]].tolist(),
         "drones": drones,
         "complexity": shape,
+        "camera": camera,
         "methods": output,
         "elapsedMs": round((time.perf_counter() - started) * 1000),
     }
