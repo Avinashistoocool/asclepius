@@ -1,17 +1,19 @@
-% Planning a Drone Swarm Sweep over a Field of Any Shape
-% Team Asclepius, NIDAR Rescueswarm
+% =====================================================================
+%  Chord-Bisecting Trajectories and Arrival-Time Sweeps
+%  for Nadir-Camera Drone Swarms
+%  Team Asclepius -- NIDAR Rescueswarm
 %
-% Overleaf: create a new project, paste this file as main.tex, and upload the
-% four PNGs from paper/figures/ into a folder named "figures".
-% Compiles with pdfLaTeX.
-
+%  Overleaf: New Project -> Upload Project -> coverage_theory_overleaf.zip
+%  (or paste this file as main.tex and upload paper/figures/*.png into a
+%  folder called "figures"). Compiler: pdfLaTeX.
+% =====================================================================
 \documentclass[11pt,a4paper]{article}
 
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
-\usepackage[margin=2.5cm]{geometry}
-\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{array}
@@ -23,303 +25,442 @@
 
 \captionsetup{font=small,labelfont=bf}
 \setlist{itemsep=2pt,topsep=4pt}
-\newtheorem{proposition}{Proposition}
+\numberwithin{equation}{section}
+
+\theoremstyle{plain}
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{lemma}[proposition]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[proposition]{Definition}
+\newtheorem{problem}{Problem}
+\theoremstyle{remark}
+\newtheorem{remark}[proposition]{Remark}
 
 \newcommand{\dd}{\mathrm{d}}
+\newcommand{\R}{\mathbb{R}}
 \newcommand{\HFOV}{\mathrm{HFOV}}
 \newcommand{\VFOV}{\mathrm{VFOV}}
+\newcommand{\pO}{\partial\Omega}
 
-\title{Planning a Drone Swarm Sweep over a Field of Any Shape}
-\author{Team Asclepius, NIDAR Rescueswarm}
+\title{Chord-Bisecting Trajectories and Arrival-Time Sweeps\\for Nadir-Camera Drone Swarms}
+\author{Team Asclepius --- NIDAR Rescueswarm}
 \date{October 2026}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-A line of drones flies over a field and photographs it with downward-pointing cameras. Each drone can fly higher to see a wider strip of ground. We want every point of the field photographed, using altitudes that are as low as possible.
+A swarm of $N$ drones flies over a planar field as a single flexible line. Each drone carries a downward-looking (nadir) camera and sets its own altitude, which fixes the width of the ground strip it images. The goal is to image every point of an arbitrarily shaped field.
 
-We first look for one \emph{centre line} through the field such that, wherever the drones are, the line cuts their row exactly in half. Writing this as a calculus-of-variations problem with a Lagrangian and deriving its equations shows three things. First, the equations reduce to a single direction field, so the centre line is fixed once its starting point on the boundary is chosen. Second, such a line always exists in convex fields. Third, in strongly non-convex fields the traced line usually circles forever and never reaches the other side, which explains why our first numerical solver failed.
+The problem began as a geometric question: find a smooth trajectory such that every chord perpendicular to it is bisected by it. A line of drones centred on such a trajectory would sweep the field symmetrically. We pose this as a constrained variational problem. We derive the first-hit derivatives, the Euler--Lagrange equations, a swept-area identity, and a no-fold condition. We show that the constraint reduces the problem to a line field, prove existence in convex fields, and give a desingularised boundary-pair ODE.
 
-We therefore relax the problem. Instead of one centre line, the sweep is described by a \emph{time map} giving, for every point, the moment the drone line passes over it. We compare four time maps. The \emph{harmonic} map, obtained by minimising an energy, needed the lowest altitude on every field we tested. Finally, we divide the field among the drones and set their altitudes so that the whole field is photographed, and this coverage is guaranteed.
+We then report what we used to solve these equations, and why each attempt failed: spline collocation with ray-cast residuals, boundary-pair collocation with shape continuation, and direct ODE shooting. The mathematics explains every failure. Finally, we describe the method now in use. The sweep is relaxed to an arrival-time field whose level sets are the formation: medial-axis chord time, principal-axis projection, a harmonic (Dirichlet-energy) field, and a geodesic (eikonal) field. A lane partition assigns ground to drones, and a monotone altitude repair guarantees 100\% nadir coverage. Every equation is checked numerically.
 \end{abstract}
 
-\noindent\textbf{Code:} \url{https://github.com/Avinashistoocool/asclepius} (folder \texttt{swarm\_lab}).\\
-\textbf{Interactive demo:} \url{https://avinashistoocool.github.io/asclepius/}.\\
-\textbf{Reproduction scripts:} \texttt{paper/verify\_derivations.py}, \texttt{paper/figures.py}, \texttt{paper/results.py}.
+\noindent\textbf{Code:} \url{https://github.com/Avinashistoocool/asclepius} \quad
+\textbf{Demo:} \url{https://avinashistoocool.github.io/asclepius/}\\
+\textbf{Reproduction:} \texttt{paper/verify\_derivations.py} (equations), \texttt{paper/figures.py} (figures), \texttt{paper/results.py} (tables).
 
-%==========================================================================
-\section{The problem}
-%==========================================================================
+\tableofcontents
+\newpage
 
-\begin{itemize}
-  \item \textbf{Field.} A region $\Omega$ in the plane bounded by a closed curve. In the code it is a polygon on a $600\times600$ canvas; all distances are in canvas units.
-  \item \textbf{Swarm.} $N$ drones flying side by side as a flexible line. The line may bend, and it may split into groups to pass around an obstacle and rejoin later.
-  \item \textbf{Camera.} Each drone carries a downward (\emph{nadir}) camera with horizontal and vertical fields of view $\HFOV$ and $\VFOV$. At altitude $h$ it photographs a rectangle of width $2h\tan(\HFOV/2)$ and length $2h\tan(\VFOV/2)$, centred under the drone and turned to its direction of travel.
-  \item \textbf{Goal.} Every point of the field appears in at least one photo, with the highest altitude kept low, paths kept short, and work shared evenly among the drones.
-\end{itemize}
+% =====================================================================
+\section{Problem statement and notation}
+% =====================================================================
 
-This is a \emph{coverage path planning} problem \citep{choset2001,galceran2013,cabreira2019}. Most existing methods either sweep with straight back-and-forth passes \citep{choset1998} or divide the field into one region per robot \citep{cortes2004}. Our case differs because the drones fly together as a single line, and because each drone chooses its own altitude.
+Let $\Omega\subset\R^2$ be a bounded, simply connected field with piecewise-smooth boundary $\pO$. In the implementation, $\Omega$ is a simple polygon on a $600\times600$ canvas, and all lengths are in canvas units. This is a coverage path planning problem \citep{choset2001,galceran2013,cabreira2019}. It differs from boustrophedon decomposition \citep{choset1998} and from Voronoi-partition coverage control \citep{cortes2004} in two ways: the swarm moves as one line, and every drone controls its own swath through its altitude.
 
-%==========================================================================
-\section{First idea: a centre line that cuts every chord in half}
-%==========================================================================
+\begin{problem}[Bisecting trajectory]\label{prob:A}
+Find a smooth curve $p:[0,L]\to\overline\Omega$, with both endpoints on $\pO$, whose perpendicular chord is bisected by $p$ at every point. Optionally, among all such curves, minimise a cost $\int_0^L f\,\dd s$.
+\end{problem}
 
-\subsection{What we were looking for}
-
-Think of the drones as a straight row moving forward. The row is a \textbf{chord} of the field: a straight segment with both ends on the boundary. Suppose the row is always perpendicular to a smooth curve $p(s)$ and centred on it. Then $p(s)$ is the path of the middle drone, and the row reaches equally far to both sides.
+\begin{problem}[Swarm coverage]\label{prob:B}
+$N$ drones carry nadir cameras with fields of view $(\HFOV,\VFOV)$. Find flight paths, headings and altitudes $h_i$ such that every point of $\Omega$ lies inside at least one camera footprint, keeping $\max h_i$, the path lengths, and the workload imbalance small.
+\end{problem}
 
 \begin{figure}[ht]
   \centering
   \includegraphics[width=\textwidth]{figures/fig1_bisecting.png}
-  \caption{(a) A centre line (green) through a convex field. Each grey chord is perpendicular to the line, and its midpoint (black dot) lies on the line. (b) The quantities used at one point: $T$ is the direction of the line, $N$ is perpendicular to it, and $d_+$, $d_-$ are the distances to the boundary on each side.}
+  \caption{(a) A bisecting trajectory in a convex field: every perpendicular chord (grey) has its midpoint (black) on the curve (green). (b) Notation at one point.}
   \label{fig:bisecting}
 \end{figure}
 
-\paragraph{Notation.} At a point $p$ on the line:
+\paragraph{Notation.} Let $p(s)$ be parametrised by arc length $s$, and let $J$ denote rotation by $+\pi/2$.
 
 \begin{center}
-\begin{tabular}{>{$}l<{$} l}
+\begin{tabular}{>{$}l<{$} p{11.5cm}}
 \toprule
-\text{Symbol} & Meaning \\
-\midrule
-s & distance travelled along the line \\
-T,\ N & unit direction of the line, and the unit vector perpendicular to it \\
-\theta & angle of $N$ \\
-d_+,\ d_- & distance from $p$ to the first boundary point hit along $+N$ and along $-N$ \\
-w = d_+ + d_- & chord width (length of the drone row) \\
-e = \tfrac12(d_+ - d_-) & distance from $p$ to the chord's midpoint (zero when the chord is bisected) \\
-\kappa & curvature of the line: how fast $T$ turns per unit length \\
+T = p',\quad N = JT & unit tangent and unit normal of the trajectory \\
+\theta & angle of $N$, so $N=(\cos\theta,\sin\theta)$ and $\dd N/\dd\theta = JN = -T$ \\
+\kappa & signed curvature, with Frenet equations $T'=\kappa N$, $N'=-\kappa T$ \citep{docarmo1976}; hence $\theta'=\kappa$ \\
+d_\pm(p,\theta) & distance from $p$ to the \emph{first} boundary point along $\pm N$ \\
+x_\pm = p\pm d_\pm N & the two chord endpoints \\
+\nu_\pm & outward unit normal of $\pO$ at $x_\pm$ \\
+w = d_+ + d_- & chord width \\
+e = \tfrac12(d_+ - d_-) & signed offset of the chord midpoint from $p$ (the \emph{bisection error}) \\
+\tau_+ = \dfrac{\nu_+\!\cdot T}{\nu_+\!\cdot N},\ \ \tau_- = \dfrac{\nu_-\!\cdot T}{-\nu_-\!\cdot N} & incidence slopes: tangents of the angle between the chord and the wall normal at each end \\
+\gamma(u) & a parametrisation of $\pO$, used from Section~\ref{sec:pair} on \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\noindent The requirement is $e=0$ everywhere along the line, that is, $d_+ = d_-$.
-
-\subsection{Why this is the right requirement: the swept-area formula}
-
-When the row moves a short distance $\dd s$ along the line, it sweeps a thin strip of area $\dd A$. A drone at signed offset $r$ from the centre travels $(1-\kappa r)\,\dd s$, since drones on the inside of a bend move less. Summing over the row,
+\noindent Problem~\ref{prob:A} is the requirement
 \begin{equation}
-\frac{\dd A}{\dd s} = \int_{-d_-}^{d_+} (1-\kappa r)\,\dd r = w\,(1-\kappa e).
-\label{eq:area}
+e\bigl(p(s),\theta(s)\bigr) = 0 \qquad\text{for all } s\in[0,L].
+\label{eq:constraint}
 \end{equation}
+Using \emph{first} hits ensures that the chord through $p$ stays within the connected part of $\Omega\cap(\text{line})$ that contains $p$. This matters when $\Omega$ is not convex.
 
-\begin{itemize}
-  \item When $e=0$, the swept area is exactly $\int w\,\dd s$, with no correction for curvature. This is why a bisecting line is desirable.
-  \item The row only moves forward if no drone travels backwards, which requires
-  \begin{equation}
-  \kappa\,d_+ < 1 \quad\text{and}\quad -\kappa\,d_- < 1.
-  \label{eq:nofold}
-  \end{equation}
-  In words: in a bend, the inner end of the row must not pass the centre of the bend. If \eqref{eq:nofold} fails, consecutive chords cross and the row \textbf{folds} over itself.
-\end{itemize}
+% =====================================================================
+\section{The mathematics}
+\label{sec:math}
+% =====================================================================
 
-\subsection{Writing it as a Lagrangian}
+\subsection{Derivatives of the first-hit distance}
 
-To choose the \emph{best} centre line, we minimise a cost $\int f\,\dd s$ along it, where $f$ may depend on the position $p$ and the direction $\theta$. A natural choice is $f=w$, the chord width, which by \eqref{eq:area} equals the swept area. The Lagrangian is
+\begin{lemma}[Ray-hit derivatives]\label{lem:hit}
+Let $x = p + d\,n$ be a transversal first hit ($\nu\cdot n\neq0$) of the ray from $p$ in the unit direction $n$, and let $n$ be rotated by an angle $\alpha$. Then
 \begin{equation}
-\mathcal{L} = f(p,\theta)\,|p'|.
-\label{eq:lagrangian}
-\end{equation}
-The factor $|p'|$ makes the cost independent of how fast the line is traversed. The Euler--Lagrange equation of \eqref{eq:lagrangian} \citep{gelfand1963} reduces to a single equation for the curvature:
-\begin{equation}
-\kappa\,\bigl(f + f_{\theta\theta}\bigr) = \partial_N f - \partial_T f_\theta .
-\label{eq:el}
-\end{equation}
-Here $f_\theta$ and $f_{\theta\theta}$ are derivatives with respect to the direction, and $\partial_N$, $\partial_T$ are derivatives along $N$ and $T$.
-
-\begin{itemize}
-  \item If $f$ does not depend on the direction, \eqref{eq:el} becomes $\kappa f = \partial_N f$: the line bends towards cheaper regions, just as light bends in glass.
-  \item The quantity $f+f_{\theta\theta}$ acts as the \emph{stiffness} of the line. Where it is negative, the equation has no smooth solution and the line develops corners. The same quantity appears in the theory of crystal shapes \citep{taylor1978,gurtin1993}.
-\end{itemize}
-
-Equation \eqref{eq:el} needs the derivatives of the wall distances $d_\pm$. Moving $p$ or turning the chord changes where the chord meets the wall. Let $n$ be the chord direction, $\alpha$ its angle, $n_\perp$ the chord direction turned by $90^\circ$, and $\nu$ the outward normal of the wall at the hit point. Then
-\begin{equation}
-\nabla_p d = -\frac{\nu}{\nu\cdot n}, \qquad
-\frac{\partial d}{\partial\alpha} = -\,d\,\frac{\nu\cdot n_\perp}{\nu\cdot n}.
+\nabla_p d = -\frac{\nu}{\nu\cdot n},
+\qquad
+\frac{\partial d}{\partial\alpha} = -\,d\,\frac{\nu\cdot Jn}{\nu\cdot n}.
 \label{eq:hit}
 \end{equation}
-Both expressions blow up when $\nu\cdot n\to0$, that is, when the chord \textbf{grazes} the wall. In a non-convex field the chord then jumps to a different part of the wall, and $d$ jumps with it. This turns out to be the root of the difficulty.
-
-\subsection{The requirement fixes the line almost completely}
-
-Adding the requirement $e=0$ through a Lagrange multiplier $\lambda(s)$ gives the constrained Lagrangian
-\begin{equation}
-\mathcal{L}_\lambda = \bigl(f + \lambda\,e\bigr)\,|p'| .
-\label{eq:constrained}
-\end{equation}
-However, the requirement $e=0$ involves only the position $p$ and the direction $\theta$, not the rate at which the direction changes. So \textbf{at every point, $e=0$ already tells us which way the line must go}. It defines a direction field that the centre line must follow. The only free choice left is the boundary point $c$ where the line starts, and minimising cost reduces to a one-variable search:
-\begin{equation}
-\min_{c\ \in\ \partial\Omega}\ \int_{\text{line starting at } c} f\,\dd s .
-\label{eq:search}
-\end{equation}
-
-\begin{proposition}[Existence of a bisecting direction]
-Let $p$ be a point of $\Omega$, and suppose $d_\pm$ vary continuously as the chord through $p$ is rotated. This holds in particular when $\Omega$ is convex. Then some direction at $p$ gives $e=0$.
-\end{proposition}
+\end{lemma}
 \begin{proof}
-Rotating the chord by $180^\circ$ swaps its two ends, so $e$ changes sign. A continuous function that changes sign has a zero (intermediate value theorem).
+Let $\phi$ be a local defining function of $\pO$ with $\nabla\phi\parallel\nu$. Differentiating $\phi(p+d\,n)=0$ gives $\nu\cdot(\delta p+\delta d\,n+d\,\delta n)=0$. Solve for $\delta d$, using $\delta n = Jn\,\delta\alpha$.
 \end{proof}
 
-In a non-convex field, the jumps described after \eqref{eq:hit} can skip over zero, leaving no valid direction. They can also produce several zeros, so the line can branch.
+Applying \eqref{eq:hit} with $n=\pm N$, decomposing $\nu_\pm$ in the frame $(T,N)$, and using $\dd N/\dd\theta=-T$ gives
+\begin{align}
+\nabla_p d_+ &= -N-\tau_+T, & \nabla_p d_- &= N-\tau_-T, &
+\partial_\theta d_+ &= d_+\tau_+, & \partial_\theta d_- &= -d_-\tau_-, \label{eq:dpm}\\[2pt]
+\nabla_p w &= -(\tau_++\tau_-)\,T, & \nabla_p e &= -N-\tfrac12(\tau_+-\tau_-)\,T, &
+\partial_\theta e &= \tfrac12\bigl(d_+\tau_+ + d_-\tau_-\bigr). \label{eq:we}
+\end{align}
 
-\subsection{Why our first solver failed}
+Two sanity checks follow. Sliding $p$ along its own chord leaves the width unchanged and changes the offset at unit rate: $\partial_N w=0$ and $\partial_N e=-1$. If the boundary is locally mirror-symmetric about the trajectory, then $\tau_+=\tau_-$, so $\partial_T e=0$ and a zero offset stays zero.
 
-The first implementation represented the line as a smooth spline and adjusted it by least squares until $e\approx0$ at many sample points, with both ends pinned to the boundary. On most non-trivial fields it stopped with messages such as \texttt{Endpoint residual 0.0073; midpoint residual 3.648}, meaning the chord midpoints were still about 3.6 units off the line. The analysis above explains why:
-\begin{enumerate}
-  \item \textbf{The equations are not smooth.} $d_\pm$ jump when the chord switches wall segments, whereas least squares assumes smooth equations.
-  \item \textbf{There are too many conditions.} By \eqref{eq:search} the line is fixed by its starting point, so pinning \emph{both} ends adds one condition too many. In general no solution exists.
-  \item \textbf{The ends are degenerate.} At the boundary the chord shrinks to zero length, and the equations lose information there.
-  \item \textbf{Sometimes no line exists at all} (Proposition~1 and Section~\ref{sec:tracing}).
-\end{enumerate}
+\begin{remark}[Grazing singularity]\label{rem:grazing}
+Both expressions in \eqref{eq:hit} blow up as $\nu\cdot n\to0$, that is, when the chord grazes the boundary. In a non-convex field the first hit then \emph{jumps} to a different boundary piece, so $d_\pm$, $w$ and $e$ are only piecewise smooth in $(p,\theta)$. This is the root cause of the failures in Section~\ref{sec:attempts}.
+\end{remark}
 
-%==========================================================================
-\section{Tracing the centre line directly}
-\label{sec:tracing}
-%==========================================================================
+\subsection{Euler--Lagrange equations for $\mathcal L = f(p,\theta)\,|p'|$}
 
-\subsection{Following the two chord ends instead of the midpoint}
-
-Instead of moving the midpoint and casting rays to the walls, we move the \textbf{two ends of the chord along the boundary}. Let the boundary be the curve $\gamma(u)$, and put the chord ends at $a=\gamma(u)$ and $b=\gamma(v)$. The midpoint is $m=(a+b)/2$ and the chord vector is $q=b-a$.
-
-The chord must stay perpendicular to the path of its midpoint. Since $m' = \tfrac12\bigl(\gamma'(u)\,u' + \gamma'(v)\,v'\bigr)$, this means
-\[
-q\cdot m' = 0 \iff \bigl(q\cdot\gamma'(u)\bigr)\,u' + \bigl(q\cdot\gamma'(v)\bigr)\,v' = 0,
-\]
-so the two ends must move in the ratio
+Consider a cost depending on position and normal direction, written as a reparametrisation-invariant Lagrangian \citep{gelfand1963}:
 \begin{equation}
-(u',\,v') \;\propto\; \bigl(q\cdot\gamma'(v),\; -\,q\cdot\gamma'(u)\bigr).
+\mathcal L(p,p') = f\bigl(p,N(p')\bigr)\,|p'|, \qquad N(p') = \frac{Jp'}{|p'|}.
+\label{eq:lagrangian}
+\end{equation}
+Since $\partial N/\partial p' = J(I-TT^{\!\top})/|p'|$, $J^{\!\top}=-J$, and $f_\theta = \nabla_N f\cdot\dd N/\dd\theta = -T\cdot\nabla_N f$,
+\begin{equation}
+\frac{\partial\mathcal L}{\partial p} = |p'|\,\nabla_p f,
+\qquad
+\frac{\partial\mathcal L}{\partial p'} = f\,T - (T\cdot\nabla_N f)\,N = f\,T + f_\theta\,N .
+\label{eq:partials}
+\end{equation}
+Substitute \eqref{eq:partials} into $\frac{\dd}{\dd s}\frac{\partial\mathcal L}{\partial p'}=\frac{\partial\mathcal L}{\partial p}$ and use $T'=\kappa N$, $N'=-\kappa T$, $\theta'=\kappa$. The result splits into two components.
+
+\paragraph{Tangential component.} This component holds identically. It is the Noether identity associated with reparametrisation invariance:
+\begin{equation}
+\frac{\dd f}{\dd s} + \kappa\,(T\cdot\nabla_N f) = T\cdot\nabla_p f .
+\label{eq:el-tangential}
+\end{equation}
+
+\paragraph{Normal component.} This is the curvature equation:
+\begin{equation}
+\boxed{\;\kappa\,\bigl(f+f_{\theta\theta}\bigr) = \partial_N f - \partial_T f_\theta\;}
+\label{eq:el}
+\end{equation}
+where $\partial_N = N\cdot\nabla_p$ and $\partial_T = T\cdot\nabla_p$. For an isotropic cost ($f_\theta=0$), \eqref{eq:el} reduces to the weighted-geodesic (Snell) law $\kappa f=\partial_N f$. The factor $f+f_{\theta\theta}$ is the anisotropic \emph{stiffness} known from crystalline and phase-boundary problems \citep{taylor1978,gurtin1993}. Equation \eqref{eq:el} is a well-posed second-order ODE only where $f+f_{\theta\theta}>0$.
+
+\paragraph{Width cost.} For $f=w$ we have $\partial_N w = 0$ by \eqref{eq:we}, so \eqref{eq:el} becomes
+\begin{equation}
+\kappa\,\bigl(w+w_{\theta\theta}\bigr) = -\,\partial_T w_\theta ,
+\label{eq:el-width}
+\end{equation}
+where $w_\theta = d_+\tau_+ - d_-\tau_-$. The second derivative $w_{\theta\theta}$ involves the boundary curvature at $x_\pm$ through $\partial_\theta\nu_\pm$.
+
+\subsection{The swept-area identity and the no-fold condition}
+
+Parametrise the region swept by the chord as $x(s,r)=p(s)+r\,N(s)$ with $r\in[-d_-,d_+]$. Then $\partial_s x=(1-\kappa r)\,T$ and $\partial_r x=N$, so the area element is $|1-\kappa r|\,\dd r\,\dd s$.
+
+\begin{proposition}[Swept area]\label{prop:area}
+Wherever the chord does not fold,
+\begin{equation}
+\frac{\dd A}{\dd s} = \int_{-d_-}^{d_+}(1-\kappa r)\,\dd r = w - \frac{\kappa}{2}\bigl(d_+^2-d_-^2\bigr) = w\,(1-\kappa e).
+\label{eq:area}
+\end{equation}
+In particular, on a bisecting trajectory ($e\equiv0$), $\int w\,\dd s$ equals the swept area \emph{exactly}.
+\end{proposition}
+
+So the bisection constraint is precisely the condition under which the line integral of chord width measures coverage. The chord sweeps monotonically (without folding) if and only if
+\begin{equation}
+\kappa\,d_+ < 1 \quad\text{and}\quad -\kappa\,d_- < 1,
+\label{eq:nofold}
+\end{equation}
+that is, neither chord end passes the centre of curvature. A drone at offset $r$ moves at speed $|1-\kappa r|$ relative to the centre drone, so \eqref{eq:nofold} also bounds the speed spread across the formation.
+
+\subsection{The constrained problem reduces to a line field}
+
+Adjoining \eqref{eq:constraint} with a multiplier $\lambda(s)$ gives
+\begin{equation}
+\mathcal L_\lambda = \bigl(f + \lambda\,e\bigr)\,|p'| ,
+\label{eq:constrained}
+\end{equation}
+whose Euler--Lagrange equation is \eqref{eq:el} with $f$ replaced by $f+\lambda e$, together with $e=0$. However, $e(p,\theta)=0$ contains no derivative of $\theta$, so it fixes the normal direction algebraically at every point. This is much stronger than an ordinary integral constraint.
+
+\begin{proposition}[Reduction]\label{prop:reduction}
+Bisecting trajectories are exactly the integral curves of the line field $\theta^\star(p)$ defined by $e(p,\theta^\star)=0$. The only remaining freedom is the starting point $c\in\pO$, and the optimal-cost version of Problem~\ref{prob:A} is the one-dimensional problem
+\begin{equation}
+\min_{c\in\pO}\; J(c)=\int_{\Gamma_c} f\,\dd s ,
+\label{eq:search}
+\end{equation}
+where $\Gamma_c$ is the integral curve starting at $c$. The multiplier $\lambda$ in \eqref{eq:constrained} is the adjoint of the sensitivity $\partial\Gamma_c/\partial c$.
+\end{proposition}
+
+\begin{proposition}[Existence of a bisecting direction]\label{prop:existence}
+Let $p\in\Omega$, and suppose $d_\pm(p,\cdot)$ are continuous in $\theta$. This holds, for example, if $\Omega$ is convex. Then some $\theta^\star\in[0,\pi)$ satisfies $e(p,\theta^\star)=0$. If additionally $\partial_\theta e(p,\theta^\star) = \tfrac12(d_+\tau_++d_-\tau_-)\neq0$, then $\theta^\star$ is locally a $C^1$ function of $p$, and the integral curve through $p$ is locally unique.
+\end{proposition}
+\begin{proof}
+Rotating by $\pi$ swaps the two rays: $d_\pm(p,\theta+\pi)=d_\mp(p,\theta)$, so $e(p,\theta+\pi)=-e(p,\theta)$. A continuous function that changes sign on $[\theta_0,\theta_0+\pi]$ has a zero there. The second claim follows from the implicit function theorem and Picard--Lindel\"of.
+\end{proof}
+
+In non-convex fields, the jumps of Remark~\ref{rem:grazing} can skip over the root, so no bisecting direction exists. They can also create several roots, so the field branches.
+
+\subsection{Boundary-pair formulation}
+\label{sec:pair}
+
+Instead of casting rays, parametrise the chord by its two endpoints on the boundary: $a=\gamma(u)$ and $b=\gamma(v)$. The chord vector is $q=b-a$ and the midpoint is
+\begin{equation}
+m=\tfrac12(a+b), \qquad m'=\tfrac12\bigl(\gamma'(u)\,u'+\gamma'(v)\,v'\bigr).
+\label{eq:midpoint}
+\end{equation}
+The chord is perpendicular to the midpoint path if and only if
+\begin{equation}
+q\cdot m' = 0 \iff \bigl(q\cdot\gamma'(u)\bigr)u'+\bigl(q\cdot\gamma'(v)\bigr)v'=0,
+\label{eq:perp}
+\end{equation}
+so $(u,v)$ follows the line field on the torus $\mathbb T^2=(\pO)^2$:
+\begin{equation}
+\boxed{\;(u',v')\ \propto\ \bigl(q\cdot\gamma'(v),\ -\,q\cdot\gamma'(u)\bigr)\;}
 \label{eq:pair}
 \end{equation}
-This is an ordinary differential equation for $(u,v)$. It needs no ray casting and remains smooth as long as the boundary is smooth. Similar constructions from pairs of boundary points appear in shape analysis \citep{brady1984,leyton1987}.
+This requires no ray casting and is as smooth as $\gamma$. In convex fields, \eqref{eq:pair} is equivalent to Problem~\ref{prob:A}. In general, the first-hit property of $a$ and $b$ as seen from $m$ must be checked separately. Related midpoint-of-boundary-pair constructions include smoothed local symmetries \citep{brady1984} and process-inferring symmetry axes \citep{leyton1987}.
 
-\paragraph{Starting the trace.} At the start, both chord ends sit at the same boundary point $c$, giving a chord of length zero. Equation \eqref{eq:pair} is degenerate there, because both components vanish. Writing $u=c-d$ and $v=c+d$ and expanding for small $d$ gives
+\paragraph{Equilibria.} The point $(u,v)$ is stationary for \eqref{eq:pair} if and only if $q\cdot\gamma'(u)=q\cdot\gamma'(v)=0$. These are \emph{double normals}: chords perpendicular to the boundary at both ends. Every smooth convex boundary has at least two, the diameter and the minimal-width chord, because each is critical for chord length.
+
+\paragraph{Desingularisation at the boundary.} The diagonal $u=v$ (a chord of zero length) is singular. Substitute $u=c-d$ and $v=c+d$. Expanding for small $d$ gives $q\cdot\gamma'(c\pm d)=2d|\gamma'|^2\pm2d^2\,\gamma'\!\cdot\gamma''+O(d^3)$, so both components of \eqref{eq:pair} vanish to first order. Choosing the orientation in which $d$ increases and dividing by $2d$, which is a time rescaling and leaves the curves unchanged, gives
 \begin{equation}
-c' \approx -\,d\,\bigl(\gamma'\cdot\gamma''\bigr), \qquad d' \approx |\gamma'|^2,
-\label{eq:start}
+c'=-\,d\,\bigl(\gamma'\cdot\gamma''\bigr)+O(d^2),\qquad d'=|\gamma'|^2+O(d^2).
+\label{eq:desing}
 \end{equation}
-which is perfectly regular. Hence \textbf{exactly one centre line starts from every boundary point}, and it leaves the boundary at a right angle. Starting from $c$ turns the problem into a step-by-step integration (an initial-value problem), as \eqref{eq:search} anticipated.
+This field is regular and transversal to the diagonal.
 
-\paragraph{Chords where the line stops.} The chord stops moving when both terms in \eqref{eq:pair} vanish, which happens when the chord is perpendicular to the boundary at \emph{both} ends. Every smooth convex field has at least two such chords: the longest chord (the diameter) and the chord across the narrowest width.
+\begin{proposition}[Endpoints]\label{prop:endpoints}
+Every boundary point $c$ is the endpoint of exactly one bisecting curve of \eqref{eq:pair}. The curve leaves $\pO$ orthogonally: $m\approx\gamma(c)+\tfrac{d^2}{2}\gamma''(c)$, which for an arc-length $\gamma$ points along the curvature normal. Hence the two-point boundary-value problem for Problem~\ref{prob:A} becomes an initial-value problem in $c$, consistent with \eqref{eq:search}.
+\end{proposition}
 
-\subsection{What happens in practice}
+\subsection{Relaxation: arrival-time fields}
+\label{sec:relax}
 
-We integrated \eqref{eq:pair}--\eqref{eq:start} with a fourth-order Runge--Kutta method \citep{hairer1993} from 8 evenly spaced starting points on two smooth fields (Figure~\ref{fig:tracing}).
+Replace the single trajectory by a scalar arrival-time field $T:\Omega\to[0,1]$. The formation at time $t$ is the front
+\begin{equation}
+\mathcal F_t=\{x\in\Omega: T(x)=t\}.
+\label{eq:front}
+\end{equation}
+A point is swept once $t\ge T(x)$. Several connected components of $\mathcal F_t$ mean the swarm has split. With $N$ drones spaced evenly along the front, the per-drone swath is $|\mathcal F_t|/N$. By the coarea formula \citep{evans2010},
+\begin{equation}
+\int_0^1|\mathcal F_t|\,\dd t=\int_\Omega|\nabla T|\,\dd x ,
+\label{eq:coarea}
+\end{equation}
+so energies $\int_\Omega|\nabla T|^p$ control front lengths, and therefore altitudes.
+
+\paragraph{Dirichlet principle (harmonic sweep).} Impose $T=0$ on a start cap $\Gamma_0$, $T=1$ on an end cap $\Gamma_1$, and linear interpolation in arc length along the two side walls. Minimising $\int_\Omega\tfrac12|\nabla T|^2$ yields the Euler--Lagrange equation
+\begin{equation}
+\Delta T = 0 \quad\text{in }\Omega .
+\label{eq:laplace}
+\end{equation}
+More generally,
+\begin{equation}
+\min_T\int_\Omega|\nabla T|^p \;\Longrightarrow\; \nabla\cdot\bigl(|\nabla T|^{p-2}\nabla T\bigr)=0 .
+\label{eq:plaplace}
+\end{equation}
+The case $p=2$ is the harmonic sweep. As $p\to1$, the energy tends to the total front length \eqref{eq:coarea}. As $p\to\infty$, the minimiser becomes the absolutely minimising Lipschitz extension, which minimises the steepest front \citep{aronsson1967}. By the maximum principle, harmonic fronts have no interior extrema, so they never close into islands and never fold. Harmonic potentials are also used for navigation \citep{connolly1990}.
+
+\paragraph{Eikonal equation (geodesic sweep).} If the front advances at unit normal speed, then $T(x)$ is the minimal travel time from $\Gamma_0$, i.e. the value function of the Lagrangian $|\dot\xi|$. It satisfies the Hamilton--Jacobi--Bellman (eikonal) equation \citep{bryson1975,sethian1999}
+\begin{equation}
+|\nabla T| = \text{const}.
+\label{eq:eikonal}
+\end{equation}
+The shocks of the distance function to the \emph{whole} boundary form the medial axis. This is the grassfire picture of the medial axis \citep{blum1967,kimia1995}.
+
+\subsection{Nadir footprint and altitude}
+
+A nadir camera at altitude $h$ with heading $\hat h$ images the rectangle
+\begin{equation}
+\mathcal R(p,\hat h,h)=\Bigl\{x:\ |(x-p)\cdot\hat h|\le h\tan\tfrac{\VFOV}{2},\ \ |(x-p)\cdot J\hat h|\le h\tan\tfrac{\HFOV}{2}\Bigr\}.
+\label{eq:footprint}
+\end{equation}
+Write a ground point in the body frame of the nearest sample $p_k$ as $(\alpha,\beta)$ (along-track, across-track). Let $\Delta_k$ be the spacing between samples, and $o$ the overlap margin. The minimal altitude at $p_k$ is
+\begin{equation}
+h_k=(1+o)\max_{x\mapsto k}\ \max\!\left(\frac{|\beta|}{\tan(\HFOV/2)},\ \frac{(|\alpha|-\Delta_k/2)_+}{\tan(\VFOV/2)}\right).
+\label{eq:altitude}
+\end{equation}
+
+\begin{proposition}[Monotone coverage]\label{prop:monotone}
+For fixed paths and headings, the set of imaged points is non-decreasing in every $h_k$. Hence repairs that only raise altitudes never lose coverage. Moreover, full coverage is reached for a large enough uniform scale $\lambda h_k$, and the minimal such $\lambda$ can be found by bisection.
+\end{proposition}
+\begin{proof}
+$\mathcal R(p,\hat h,h)$ is nested increasing in $h$, and unions of increasing sets are increasing.
+\end{proof}
+
+% =====================================================================
+\section{What we used to solve the equations, and why it failed}
+\label{sec:attempts}
+% =====================================================================
+
+All three attempts below target Problem~\ref{prob:A} directly. The code is preserved in the repository history (commit \texttt{ae96e22}, folder \texttt{swarm\_lab/legacy/}).
+
+\subsection{Attempt 1: spline collocation with ray-cast residuals}
+
+\paragraph{Formulation.} Choose a chart direction $D$ (a principal axis, a coordinate axis, or the axis between two long, facing boundary edges), with $D^\perp=JD$. Represent the trajectory as a graph over that chart,
+\begin{equation}
+p(t)=\bigl(x_0+(x_1-x_0)\,t\bigr)D + y(t)\,D^\perp,\qquad y(t)=\sum_{j=1}^{n} y_j\,B_{j,3}(t),
+\label{eq:chart}
+\end{equation}
+where $B_{j,3}$ are clamped cubic B-splines on uniform knots, so the curve is $C^2$, with $n\in\{20,36,56\}$. The unknowns are the control values $y_j$ and the chart limits $x_0,x_1$.
+
+\paragraph{Residuals.} At $5n$ uniform points and $3n$ Chebyshev-clustered points $t_i$, compute the tangent from the analytic derivative $p'(t_i)$, cast rays along $\pm N$ to the first polygon edges, and impose
+\begin{equation}
+r_i = e\bigl(p(t_i),\theta(t_i)\bigr) = \tfrac12\bigl(d_+-d_-\bigr)=0,
+\label{eq:attempt1}
+\end{equation}
+together with the endpoint residuals $20\cdot\operatorname{dist}\bigl(p(0),\pO\bigr)$ and $20\cdot\operatorname{dist}\bigl(p(1),\pO\bigr)$.
+
+\paragraph{Solver.} Bounded nonlinear least squares (trust-region reflective, \texttt{scipy.optimize.least\_squares}, \citealp{virtanen2020}) with an \emph{analytic} Jacobian. The Jacobian comes from Lemma~\ref{lem:hit}, applied edge by edge as ray--segment intersection derivatives. The solver was limited to 180 evaluations, with an 18\,s budget over all charts and endpoint seeds.
+
+\paragraph{Acceptance tests.} The endpoint distance must be at most $10^{-5}$. The maximum $|e|$ over 3074 off-grid samples must not exceed the tolerance (0.01 to 1 unit). Each B\'ezier piece must lie inside the polygon, which is checked by subdivision and convex-hull tests.
+
+\paragraph{What happened.} On most non-symmetric fields every chart failed. A typical message was:
+\begin{verbatim}
+No validated numerical trajectory was found ...
+Endpoint residual 0.007304; midpoint residual 3.6480.
+Endpoint residual 0.023611; midpoint residual 4.7275.
+Endpoint residual 0.015916; midpoint residual 2.6701.
+\end{verbatim}
+The chord midpoints remained 2.7 to 4.7 units from the curve.
+
+\paragraph{Why it failed (explained by Section~\ref{sec:math}).}
+\begin{enumerate}
+  \item \textbf{Non-smooth residuals.} By Remark~\ref{rem:grazing}, $e$ jumps whenever a ray switches polygon edges or boundary pieces. Gauss--Newton and trust-region methods assume $C^1$ residuals, so steps that cross a jump are rejected and the solver stalls.
+  \item \textbf{Over-determination.} By Proposition~\ref{prop:reduction}, bisecting curves form a one-parameter family fixed by the starting point. Pinning \emph{both} endpoints while also imposing \eqref{eq:constraint} at every collocation point leaves no solution, unless the two endpoints happen to lie on the same integral curve. Least squares then returns a compromise, hence the non-zero midpoint residual.
+  \item \textbf{Graph restriction.} The chart \eqref{eq:chart} forces $p$ to be monotone in $D$. Bisecting curves that turn by more than $90^\circ$ relative to $D$ cannot be represented.
+  \item \textbf{Endpoint degeneracy.} As $p\to\pO$, the chord shrinks ($w\to0$) and the rows of the Jacobian lose rank.
+  \item \textbf{Non-existence.} In strongly non-convex fields, a bisecting curve may not exist at all (Proposition~\ref{prop:existence} and Attempt~3).
+\end{enumerate}
+
+\subsection{Attempt 2: boundary-pair collocation with shape continuation}
+
+\paragraph{Formulation.} To remove ray casting and the graph restriction, we used the pair form of Section~\ref{sec:pair}. With $u=c-d$ and $v=c+d$, the centre phase $c(t)$ and the half-separation $d(t)$ were represented as cubic B-splines, with $d(0)=0$ and $d(1)=\pi$, so that both chord ends start together and meet again on the far side. The residuals were collocated at 3 Gauss--Legendre nodes per knot interval:
+\begin{equation}
+r_i=\frac{q\cdot m'}{|q|\,\pi\sin(\pi t_i)}=0,\qquad
+s_i=\frac{|m'|}{\pi\sin(\pi t_i)}-R=0 .
+\label{eq:attempt2}
+\end{equation}
+Here $r_i$ is \eqref{eq:perp} normalised by the expected size near the ends, $s_i$ is a regular-speed condition with a free radius $R$ that prevents stationary points, and penalties enforce $0<d<\pi$.
+
+\paragraph{Solver.} Least squares with an analytic Jacobian, combined with \emph{shape continuation}: the boundary was deformed as $\gamma_\lambda=(1-\lambda)\,\gamma_{\text{circle}}+\lambda\,\gamma$ from a circle ($\lambda=0$, where every diameter is a solution) to the target field ($\lambda=1$), with adaptive steps in $\lambda$. The seeds were the critical phases of the half-perimeter chord length, i.e. double normals (Section~\ref{sec:pair}). The spline resolution was then refined through 48, 72, 104 and 144 controls. Finally, an interval-arithmetic enclosure verified $|e|\le$ tolerance over every parameter subinterval. The budget was 80\,s in total and 24\,s per seed.
+
+\paragraph{What happened.} The method worked on convex and mildly non-convex smooth fields. On harder fields it ended with ``No interval-verified trajectory was found in this bounded continuation search'', after continuation stalls, time-outs, or failed verification. Each attempt took up to 80\,s.
+
+\paragraph{Why it failed.}
+\begin{enumerate}
+  \item \textbf{Wrong boundary condition.} Imposing $d(1)=\pi$ forces the two chord ends to meet exactly halfway round the boundary. By Proposition~\ref{prop:endpoints}, the far endpoint is \emph{determined} by the start $c$, and is generally not halfway round. The collocation problem is therefore again over-determined.
+  \item \textbf{Bifurcations along the continuation.} As $\lambda$ increases, double normals are created and annihilated in pairs. At these points the Jacobian of \eqref{eq:attempt2} becomes singular, and the continuation branch turns back or ends (a fold bifurcation; \citealp{allgower2003}).
+  \item \textbf{Recurrent orbits.} When the line field \eqref{eq:pair} has no orbit joining the diagonal to itself, no solution exists at any resolution (Attempt~3).
+  \item \textbf{First hits are not guaranteed.} In non-convex fields, a pair solution of \eqref{eq:perp} can pass behind a bump, so the first-hit condition fails and verification rejects an otherwise converged curve.
+\end{enumerate}
+
+\subsection{Attempt 3: direct shooting on the pair ODE}
+
+\paragraph{Method.} Following Proposition~\ref{prop:endpoints}, integrate \eqref{eq:desing} and then \eqref{eq:pair} as an initial-value problem from $(c,d)=(c_0,2\cdot10^{-3})$. We used classical RK4 with step $0.004$ \citep{hairer1993}. Because \eqref{eq:pair} defines only a line field, each step chooses the sign that continues the previous direction. Integration stops when $d$ returns to $0$ (the far endpoint) or after 6000 steps. Adaptive integrators (\texttt{solve\_ivp}) were tried first, but the unoriented field made them flip direction and stall.
 
 \begin{figure}[ht]
   \centering
   \includegraphics[width=\textwidth]{figures/fig2_tracing.png}
-  \caption{Centre lines traced from 8 starting points (black dots). (a) In a convex field, all 8 traces cross the field and end on the opposite boundary, so each is a valid centre line. (b) In a strongly non-convex field, only 2 of the 8 reach the far side. The other 6 (red) keep circling inside the field, because the chord rotates without ever closing.}
+  \caption{Shooting on \eqref{eq:pair} from 8 boundary points (black dots). (a) Convex field: 8 of 8 traces reach the far boundary and are valid bisecting curves. (b) Strongly non-convex field $r(t)=150+30\cos2t+25\cos3t+18\cos4t+10\sin2t-15\sin3t+12\sin4t$: only 2 of 8 reach the far side. The other 6 (red) are recurrent orbits on $\mathbb T^2$; after 6000 steps their path lengths are 1200--1400 units, against a field diameter of about 400.}
   \label{fig:tracing}
 \end{figure}
 
-\paragraph{Conclusion.} Bisecting centre lines exist reliably only in convex or nearly convex fields. General fields need a different approach.
+\paragraph{What happened.} This is the most faithful method, and it confirmed the theory (Figure~\ref{fig:tracing}). In convex fields every start gives a bisecting curve. In strongly non-convex fields most starts lead to recurrent orbits, on which the chord keeps rotating and never closes.
 
-%==========================================================================
-\section{The practical approach: a time map}
-%==========================================================================
+\paragraph{Conclusion.} Bisecting trajectories through the whole field exist reliably only in convex or near-convex fields. This does not depend on the solver: it is a property of the line field. A practical planner for arbitrary fields must therefore relax Problem~\ref{prob:A}.
 
-\subsection{The idea}
-
-We drop the single centre line. Instead, the sweep is described by a \textbf{time map} $T(x)$, which gives for each point $x$ of the field the moment $0\le T\le1$ at which the drone line passes over it. At time $t$, the drone line is the curve on which $T(x)=t$, a \emph{level line} of the map.
-
+\subsection{What did work for Problem~\ref{prob:A}: exact constructions}
+For fields with known symmetry, bisecting trajectories are available in closed form, and these were kept as exact presets:
 \begin{itemize}
-  \item Every point gets a time, so the whole field is swept by construction.
-  \item If a level line breaks into several pieces, the swarm splits into groups.
-  \item With $N$ drones spread evenly along a level line of length $\ell$, each drone covers a strip of width $\ell/N$. That width sets its altitude.
+  \item a diameter of a circle;
+  \item the major axis of an ellipse, since reflection swaps the chord ends;
+  \item any reflection axis, verified exactly with rational arithmetic on the polygon vertices;
+  \item the mid-radius arc of an annular sector, where normal chords are radial.
 \end{itemize}
 
-The coarea formula \citep{evans2010} links the time map to the length of the drone line:
-\begin{equation}
-\int_0^1 \bigl(\text{length of the drone line at time } t\bigr)\,\dd t = \int_\Omega |\nabla T|\,\dd x .
-\label{eq:coarea}
-\end{equation}
-Keeping $|\nabla T|$ small therefore keeps the drone line short, and so keeps altitudes low. Each of our four planners is one choice of $T$ (Figure~\ref{fig:sweeps}).
+% =====================================================================
+\section{What we use now}
+\label{sec:method}
+% =====================================================================
+
+The planner solves Problem~\ref{prob:B} with the relaxation of Section~\ref{sec:relax}: it computes four arrival-time fields, splits the field among the drones, and plans altitudes.
+
+\subsection{Medial axis (the backbone)}
+The medial axis is the closure of the set of centres of maximal inscribed disks \citep{blum1967,choi1997}. We sample the boundary at about 1 unit (400 to 6000 samples) and compute the Voronoi diagram of the samples. Interior Voronoi edges converge to the medial axis as the sampling density increases \citep{brandt1992}. A ridge generated by samples $g_1,g_2$ is kept only if the boundary arc between them exceeds $0.05\times$ the perimeter (potential-residual pruning, \citealp{ogniewicz1995}). The \emph{trunk} is the longest path, found with two Dijkstra passes \citep{dijkstra1959}, in the minimum spanning tree of the largest component. It is smoothed by a cubic spline kept inside $\Omega$ and extended tangentially to $\pO$. Its two ends define the start cap $\Gamma_0$ and the end cap $\Gamma_1$.
+
+\subsection{The four arrival-time fields}
+
+All fields are computed on a $200\times200$ grid, and fronts are extracted at 90 levels by marching squares \citep{lorensen1987,vanderwalt2014}.
+
+\begin{enumerate}
+  \item \textbf{Medial-axis chords.} $T(x)=s/L$ for $x$ on the perpendicular chord of the trunk at arc length $s$. The medial axis is equidistant from the boundary, which is a \emph{different} condition from bisection. The two coincide only where $\tau_+=\tau_-$ in \eqref{eq:we}. The measured mean $|e|$ along the trunk is 0.0 (ellipse), 0.6 (C-bend), 10.4 (star), 13.1 (narrow neck) and 18.1 (random blob). The chords also fold wherever \eqref{eq:nofold} fails.
+  \item \textbf{Principal-axis (lawnmower).} $T(x)=\langle x,a\rangle$, rescaled to $[0,1]$, where $a$ is the leading principal axis of the boundary samples. Fronts are straight lines, the continuous analogue of boustrophedon coverage \citep{choset1998}.
+  \item \textbf{Harmonic.} Solve \eqref{eq:laplace} with the 5-point Laplacian and a sparse direct solver \citep{virtanen2020}.
+  \item \textbf{Geodesic.} Solve \eqref{eq:eikonal} from $\Gamma_0$ by fast marching \citep{sethian1996}.
+\end{enumerate}
 
 \begin{figure}[ht]
   \centering
   \includegraphics[width=\textwidth]{figures/fig3_sweeps.png}
-  \caption{The four time maps on the same field. Colour shows when the swarm passes each point (dark = early, yellow = late). White lines show the position of the drone line at 8 moments. Green circle: start. Red square: end.}
+  \caption{The four arrival-time fields on one field. Colour shows $T(x)$; white lines are the fronts $\mathcal F_t$ at 8 times. Green: start cap. Red: end cap.}
   \label{fig:sweeps}
 \end{figure}
 
-\subsection{The four planners}
+\subsection{Lanes, paths and altitudes}
 
-\paragraph{Medial-axis chords.} The \emph{medial axis} is the set of centres of the largest circles that fit inside the field \citep{blum1967}. We take its longest branch (the \emph{trunk}) and sweep with the chord perpendicular to it. This is the closest relative of the centre line of Section~2. However, the medial axis is equally far from both walls, which is \textbf{not} the same as cutting the chord in half. The two coincide only where the field is locally mirror-symmetric about the trunk. The average midpoint offset is 0.0 on an ellipse but 10 to 18 units on a star, a neck or a random blob. The chords also fold wherever \eqref{eq:nofold} fails.
-
-\paragraph{Straight sweep (lawnmower).} $T$ is the position along the field's longest direction (its principal axis), so the drone line is always straight. This is the continuous version of a back-and-forth survey \citep{choset1998}. Every drone moves at the same speed, but the line splits at every dent in the boundary.
-
-\paragraph{Harmonic.} Set $T=0$ at the start and $T=1$ at the end. In between, choose $T$ to minimise the energy $\int_\Omega|\nabla T|^2\,\dd x$, which is the smoothest way to go from 0 to 1. The Euler--Lagrange equation of this energy is Laplace's equation,
+\paragraph{Lane partition.} Each front is oriented consistently in time: its pieces are reordered and reversed so that their nearest points on the previous front have increasing lane coordinate. The front is then parametrised by normalised arc length $\sigma\in[0,1]$. Drone $i$ owns
 \begin{equation}
-\Delta T = 0 .
-\label{eq:laplace}
+\mathcal A_i=\Bigl\{x:\ \sigma\bigl(\pi(x)\bigr)\in\bigl[\tfrac iN,\tfrac{i+1}N\bigr)\Bigr\},
+\label{eq:lanes}
 \end{equation}
-By the maximum principle, a harmonic map has no peaks or pits inside the field. As a result, the drone line never closes into a loop and never folds back. Harmonic maps are already used for robot navigation \citep{connolly1990}. Minimising $\int|\nabla T|^p$ for other powers $p$ gives a family of related planners. As $p\to1$ this minimises the total length in \eqref{eq:coarea}, and as $p\to\infty$ it minimises the single longest drone line \citep{aronsson1967}.
+where $\pi(x)$ is the nearest point on the nearest-in-time front. Drone $i$ flies at $\sigma=(i+\tfrac12)/N$. A step longer than 25 units counts as a \emph{transit jump} between pieces of a split front.
 
-\paragraph{Geodesic (constant speed).} $T$ is the shortest walking distance from the start, going around obstacles. It is the minimum value of the Lagrangian $\int|\dot x|\,\dd t$ over paths from the start, and it satisfies the eikonal equation \citep{sethian1999}
-\begin{equation}
-|\nabla T| = \text{constant},
-\label{eq:eikonal}
-\end{equation}
-so the drone line advances at the same speed everywhere. Behind corners the line forms sharp kinks and splits. If the walking distance is measured from the \emph{whole} boundary instead, its kinks trace out exactly the medial axis; this is the ``grassfire'' picture of the medial axis \citep{blum1967,kimia1995}.
-
-\subsection{How each map is computed}
-
-The field is rasterised on a $200\times200$ grid.
-\begin{itemize}
-  \item \textbf{Medial axis.} We sample the boundary every 1 unit and compute the Voronoi diagram of the samples. The Voronoi edges inside the field approximate the medial axis \citep{brandt1992}. Short side branches caused by small bumps are removed \citep{ogniewicz1995}. The longest remaining path is the trunk, and its two ends define the start and end of the sweep for all planners.
-  \item \textbf{Harmonic.} We solve the standard 5-point discrete Laplace equation with a sparse direct solver \citep{virtanen2020}.
-  \item \textbf{Geodesic.} Shortest paths on the grid are computed by fast marching \citep{sethian1996}, as implemented in scikit-image \citep{vanderwalt2014}.
-  \item \textbf{Drone-line positions.} We extract the level lines $T=t$ at 90 moments using marching squares \citep{lorensen1987}.
-\end{itemize}
-
-%==========================================================================
-\section{From a time map to drones, paths and altitudes}
-%==========================================================================
+\paragraph{Altitudes and repair.} Initial altitudes come from \eqref{eq:altitude}, followed by a 3-sample max filter; samples with no assigned cells are interpolated from their neighbours. Footprints \eqref{eq:footprint} are then stamped at every sample, and densely between samples using the lower of the two altitudes. Any field cell left unimaged raises its owner's altitude near the nearest sample by $\times1.15$ plus one cell. This is repeated for at most 8 rounds. By Proposition~\ref{prop:monotone} the loop never loses coverage. In every experiment it ended with zero gaps within two rounds.
 
 \begin{figure}[ht]
   \centering
   \includegraphics[width=\textwidth]{figures/fig4_drones.png}
-  \caption{The harmonic plan with 8 drones. (a) The field divided among the drones (colours), with each drone's flight path. (b) Camera footprints for every 9th photo, with heading arrows. The whole field is photographed.}
+  \caption{Harmonic plan with 8 drones. (a) Lane partition \eqref{eq:lanes} with flight paths. (b) Camera footprints \eqref{eq:footprint} for every 9th photo, with headings.}
   \label{fig:drones}
 \end{figure}
 
-\subsection{Splitting the field among the drones}
-
-At each moment, the drone line is measured from one end to the other and scaled to run from 0 to 1. Drone $i$ is responsible for the part between $i/N$ and $(i+1)/N$, and flies along its middle at $(i+\tfrac12)/N$. Each point of the field belongs to the drone whose part passed over it. This divides the field into $N$ areas (Figure~\ref{fig:drones}a). When the line has split, a drone may have to hop from one piece to another; we call these hops \emph{transit jumps}.
-
-\subsection{Choosing the altitudes}
-
-At each photo position we know where the drone is and which way it is heading. Every point of the drone's area must lie inside some photo. Take a point at distance $\alpha$ ahead of or behind the nearest photo position, and $\beta$ to the side of it. The drone must then fly at an altitude of at least
-\begin{equation}
-h \;\ge\; \max\!\left(\frac{|\beta|}{\tan(\HFOV/2)},\;
-\frac{|\alpha| - \tfrac12\,(\text{distance between photos})}{\tan(\VFOV/2)}\right).
-\label{eq:altitude}
-\end{equation}
-At each photo position we take the largest requirement over all its points and add a 10\% overlap margin.
-
-\subsection{Checking coverage and fixing gaps}
-
-Next, we mark every grid cell that actually lies inside a photo. Extra photos are placed densely between positions, using the lower of the two neighbouring altitudes so that the check errs on the safe side. If any cell is missed, the drone responsible for it climbs slightly near that spot, and the check is repeated.
-
-\begin{proposition}[Coverage can always be completed]
-Flying higher never reduces coverage. Hence every correction only adds coverage, and at a high enough altitude every footprint contains the whole field.
-\end{proposition}
-\begin{proof}
-A footprint is a rectangle that grows with $h$, so raising $h$ enlarges every photo, and therefore the union of all photos.
-\end{proof}
-
-In all our experiments every gap was closed within \textbf{two rounds}.
-
-%==========================================================================
+% =====================================================================
 \section{Results}
-%==========================================================================
+% =====================================================================
 
-The setup is 12 drones, $\HFOV=70^\circ$, $\VFOV=55^\circ$ and a 10\% overlap margin. The fields are an ellipse, a five-pointed star, a C-shaped bend, a field with a narrow neck, and a random blob. All four planners photographed \textbf{100\%} of every field. Altitudes are in canvas units; to convert to metres, multiply by the field width in metres divided by 600.
+The setup is 12 drones, $\HFOV=70^\circ$, $\VFOV=55^\circ$ and 10\% overlap. All four planners reached \textbf{100\%} nadir coverage with zero unimaged cells on every field. Altitudes are in canvas units; multiply by (field width in metres)/600 to convert to metres.
 
 \begin{table}[ht]
 \centering
-\caption{Highest altitude needed. Lower is better; bold marks the best in each row.}
+\caption{Highest altitude needed for full coverage (lower is better; bold marks the best in each row).}
 \label{tab:altitude}
 \begin{tabular}{lrrrr}
 \toprule
@@ -336,7 +477,7 @@ Blob        & 27.9  & 28.1          & \textbf{24.9} & 79.1  \\
 
 \begin{table}[ht]
 \centering
-\caption{Workload balance: smallest drone area divided by largest drone area (1 means perfectly equal). The last column shows how often medial-axis chords fold over.}
+\caption{Area balance (smallest $|\mathcal A_i|$ divided by largest; 1 is ideal), and the share of medial-axis chord steps that fold, i.e. violate \eqref{eq:nofold}.}
 \label{tab:balance}
 \begin{tabular}{lrrrrr}
 \toprule
@@ -351,85 +492,63 @@ Blob        & 0.16          & \textbf{0.87} & 0.39 & 0.84          & 52\% \\
 \end{tabular}
 \end{table}
 
-\paragraph{What the tables show.}
-\begin{itemize}
-  \item \textbf{Harmonic needs the lowest altitude on every field.} It minimises an energy that penalises long, stretched drone lines \eqref{eq:coarea}, and its line never folds. The drawback is uneven workload. The line bunches up in narrow parts and stretches in wide ones, so some drones cover far more ground than others.
-  \item \textbf{Lawnmower and geodesic share the work most evenly,} because their lines move uniformly. However, both split around dents, and the geodesic line needs a very high altitude where it kinks (159 at the neck).
-  \item \textbf{Medial-axis chords only work well on simple, tube-like fields.} Elsewhere the chords fold (Table~\ref{tab:balance}) and do not bisect.
-\end{itemize}
+\paragraph{Discussion.} The harmonic field needs the lowest altitude on every field. This is consistent with \eqref{eq:coarea}--\eqref{eq:plaplace}: it minimises a front-length energy, and by the maximum principle its fronts never fold. The price is unequal drone areas, because fronts bunch up in narrow regions. The lawnmower and geodesic sweeps balance work best but split, and the geodesic front needs very high altitudes at cusps. The medial-axis chord sweep is reliable only on near-convex or tube-like fields, where \eqref{eq:nofold} holds and $\tau_+\approx\tau_-$. Computing all four plans takes 3 to 6\,s in Python and 0.8 to 2.3\,s in the browser port.
 
-\paragraph{Recommendation.} Use the harmonic plan when altitude is the main limit, for example because of camera resolution or regulations. Use the lawnmower or geodesic plan when battery life and an even workload matter more.
+% =====================================================================
+\section{Numerical verification of the mathematics}
+% =====================================================================
 
-Computing all four plans takes 3--6\,s in Python and 0.8--2.3\,s in the browser demo.
-
-%==========================================================================
-\section{Checking the mathematics}
-%==========================================================================
-
-Every equation above was checked numerically with \texttt{paper/verify\_derivations.py}.
+All checks are in \texttt{paper/verify\_derivations.py}.
 
 \begin{table}[ht]
 \centering
-\caption{Numerical checks of the equations.}
-\begin{tabular}{p{9.2cm}cl}
+\begin{tabular}{p{8.8cm}cl}
 \toprule
-What is checked & Equation & Error found \\
+Check & Equation & Result \\
 \midrule
-Wall-distance derivative w.r.t.\ position, 200 random chords in an ellipse & \eqref{eq:hit} & $4\times10^{-8}$ \\
-Wall-distance derivative w.r.t.\ chord angle & \eqref{eq:hit} & $8\times10^{-8}$ \\
-Euler--Lagrange equation splits as claimed (along-the-line part holds automatically) & \eqref{eq:el} & $3\times10^{-9}$ \\
-Traced chord stays perpendicular to the motion of its midpoint & \eqref{eq:pair} & $8\times10^{-15}$ \\
-Harmonic map satisfies the discrete Laplace equation & \eqref{eq:laplace} & $3\times10^{-15}$ \\
-Harmonic map has the lowest energy (small changes only raise it) & \eqref{eq:laplace} & confirmed \\
-Geodesic map moves at constant speed & \eqref{eq:eikonal} & confirmed \\
+Ray-hit derivative in position, 200 random rays in an ellipse & \eqref{eq:hit} & $4.2\times10^{-8}$ \\
+Ray-hit derivative in direction & \eqref{eq:hit} & $7.9\times10^{-8}$ \\
+Tangential Euler--Lagrange identity, anisotropic $f$ & \eqref{eq:el-tangential} & $3.4\times10^{-9}$ \\
+Pair ODE: chord $\perp$ midpoint velocity (cosine) & \eqref{eq:perp} & $8.1\times10^{-15}$ \\
+Integrated midpoint path $\perp$ chord (finite RK4 steps) & \eqref{eq:perp} & $3.8\times10^{-4}$ \\
+Discrete Laplace residual of the harmonic field & \eqref{eq:laplace} & $2.7\times10^{-15}$ \\
+Harmonic field minimises the discrete Dirichlet energy & \eqref{eq:laplace} & no decrease \\
+Geodesic field: $|\nabla T|$ constant (relative IQR) & \eqref{eq:eikonal} & $0$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The test suite \texttt{swarm\_lab/test\_medial.py} also checks that every planner gives each drone an area and photographs 100\% of the field.
+The unit tests \texttt{swarm\_lab/test\_medial.py} also assert that the lanes partition the field among all $N$ drones, and that nadir coverage is 100\% (Proposition~\ref{prop:monotone}).
 
-%==========================================================================
-\section{How to take the equations further}
-%==========================================================================
+% =====================================================================
+\section{How to solve the equations further}
+% =====================================================================
 
 \begin{enumerate}
-  \item \textbf{Find the best exact centre line where one exists.} Trace \eqref{eq:pair}--\eqref{eq:start} from many starting points, keep the traces that reach the far side, and choose the start with the lowest cost \eqref{eq:search}. Check that every chord hits the \emph{nearest} wall, because in a non-convex field a traced chord can pass behind a bump. Chords that are perpendicular to the boundary at both ends are good places to begin the search.
-  \item \textbf{Solve the curvature equation \eqref{eq:el} as a boundary-value problem} when an optimal line is wanted without the exact bisection requirement. Suitable solvers are collocation \citep{kierzenka2001}, available as \texttt{scipy.integrate.solve\_bvp}, and multiple shooting \citep{ascher1995}. Start from an easy shape such as an ellipse, morph it gradually into the real field, and re-solve at each step (numerical continuation, \citealp{allgower2003}). Watch the stiffness $f+f_{\theta\theta}$: wherever it turns negative, the line will want a corner.
-  \item \textbf{Smooth out the wall jumps.} Replace ``nearest wall'' with a soft minimum over all walls, and sharpen it gradually. Alternatively, pose the whole problem as an optimisation and solve it with an interior-point method \citep{wachter2006} via CasADi \citep{andersson2019}. Pontryagin's maximum principle \citep{pontryagin1962,bryson1975} gives the same equations as \eqref{eq:constrained} and can also handle drone turning limits.
-  \item \textbf{Minimise the worst altitude directly.} The harmonic map minimises an \emph{average}. To minimise the \emph{longest} drone line instead, minimise $\int|\nabla T|^p$ with increasing $p$ \citep{aronsson1967,chambers2009}.
-  \item \textbf{Balance the harmonic plan's workload} by solving $\nabla\cdot\bigl(a(x)\nabla T\bigr)=0$ with a weight $a(x)$ chosen to even out the speed of the line. This sits between the harmonic and geodesic planners.
-  \item \textbf{Find the exact minimum altitude.} Since flying higher never reduces coverage (Proposition~2), the lowest uniform altitude scale that gives full coverage can be found by bisection.
-  \item \textbf{Real flight.} Add limits on turning and climb rate, follow the terrain from an elevation model, and convert the plan to GPS coordinates for the autopilot.
+  \item \textbf{Solve Problem~\ref{prob:A} by shooting in $c$ with first-hit checks.} Integrate \eqref{eq:desing}$\to$\eqref{eq:pair} from many $c$, using an oriented adaptive integrator. Stop at $d\to0$ (success) or on Poincar\'e recurrence (failure). Verify first hits along each accepted orbit, and minimise $J(c)$ in \eqref{eq:search} by golden-section search. The gradient $J'(c)$ follows from the variational equation of \eqref{eq:pair}, or equivalently from $\lambda$ in \eqref{eq:constrained}. Seed the search on both sides of each double normal.
+  \item \textbf{Solve \eqref{eq:el} as a two-point BVP} when a cost-optimal curve is wanted without exact bisection. Use the state $(p,\theta)$ with $p'=T(\theta)$ and $\theta'=\kappa$. Suitable solvers are collocation with residual control \citep{kierzenka2001} (\texttt{scipy.integrate.solve\_bvp}) or multiple shooting \citep{keller1968,ascher1995}. Continue from a symmetric shape with pseudo-arclength continuation \citep{allgower2003}, monitoring $f+f_{\theta\theta}>0$.
+  \item \textbf{Regularise the non-smoothness.} Replace the first hit $d=\min_j r_j$ by a soft minimum $-\varepsilon\log\sum_j e^{-r_j/\varepsilon}$, and let $\varepsilon\to0$ along the continuation. Alternatively, pose the problem as an NLP with complementarity constraints for chord switches and solve it with an interior-point method \citep{wachter2006} through CasADi \citep{andersson2019}. Pontryagin's principle \citep{pontryagin1962,bryson1975} reproduces \eqref{eq:constrained} and adds turn-rate limits.
+  \item \textbf{Minimise the worst altitude.} The objective $\max_t|\mathcal F_t|/N$ is a homotopy height \citep{chambers2009}. Approximate it by \eqref{eq:plaplace} with increasing $p$, solved by Newton iteration under continuation in $p$.
+  \item \textbf{Balance harmonic workloads} by solving $\nabla\cdot(a(x)\nabla T)=0$ with $a$ chosen to equalise $|\nabla T|$. This interpolates between \eqref{eq:laplace} and \eqref{eq:eikonal}.
+  \item \textbf{Minimal altitude.} Bisect on a uniform scale (Proposition~\ref{prop:monotone}), or solve an LP / set-cover relaxation over the footprint--cell incidence matrix.
+  \item \textbf{Real flight.} Add turn-rate and climb-rate limits, terrain following from a DEM, and georeferencing.
 \end{enumerate}
 
-%==========================================================================
+% =====================================================================
 \section{Limitations}
-%==========================================================================
+% =====================================================================
 
 \begin{itemize}
-  \item Exact bisecting centre lines exist only in convex or nearly convex fields (Section~\ref{sec:tracing}). The time-map approach is necessary, not just convenient.
-  \item The medial axis is computed from boundary samples. How aggressively side branches are pruned affects the medial-axis planner, and also the start and end points of all planners.
-  \item Coverage is guaranteed on a $200\times200$ grid. Features smaller than one cell (3 units) are not resolved.
+  \item Whole-field bisecting trajectories exist only under the hypotheses of Proposition~\ref{prop:existence}. On strongly non-convex fields they are generically absent (Figure~\ref{fig:tracing}).
+  \item The medial axis is sampled, so the pruning threshold and the choice of trunk affect the start and end caps.
+  \item Coverage is guaranteed on a $200\times200$ grid; features smaller than one cell (3 units) are not resolved.
   \item Battery, wind and flight dynamics are not modelled.
-  \item The browser demo smooths the medial trunk differently from the Python version and uses grid Dijkstra instead of fast marching. Its results are close to, but not identical with, the Python results.
+  \item The browser port smooths the trunk with a Gaussian filter and uses 8-connected Dijkstra instead of fast marching; its statistics agree with the Python version to within a factor of 3.
 \end{itemize}
 
-%==========================================================================
-\section*{Reproducing this report}
-%==========================================================================
-
-\begin{verbatim}
-py -m pip install -r swarm_lab/requirements.txt matplotlib
-py paper/verify_derivations.py             # equation checks
-py paper/figures.py                        # Figures 1-4
-py paper/results.py                        # Tables 1-2
-cd swarm_lab; py -m unittest test_medial   # coverage tests
-\end{verbatim}
-
-%==========================================================================
+% =====================================================================
 \begin{thebibliography}{99}
-%==========================================================================
-
+% =====================================================================
 \bibitem[Allgower and Georg(2003)]{allgower2003}
 E.~L. Allgower and K.~Georg.
 \newblock \emph{Introduction to Numerical Continuation Methods}.
@@ -480,6 +599,11 @@ E.~W. Chambers and D.~Letscher.
 \newblock On the height of a homotopy.
 \newblock In \emph{Proceedings of the 21st Canadian Conference on Computational Geometry}, pages 103--106, 2009.
 
+\bibitem[Choi et~al.(1997)]{choi1997}
+H.~I. Choi, S.~W. Choi, and H.~P. Moon.
+\newblock Mathematical theory of medial axis transform.
+\newblock \emph{Pacific Journal of Mathematics}, 181(1):57--88, 1997.
+
 \bibitem[Choset(2001)]{choset2001}
 H.~Choset.
 \newblock Coverage for robotics: a survey of recent results.
@@ -499,6 +623,16 @@ C.~I. Connolly, J.~B. Burns, and R.~Weiss.
 J.~Cort\'es, S.~Mart\'{\i}nez, T.~Karata\c{s}, and F.~Bullo.
 \newblock Coverage control for mobile sensing networks.
 \newblock \emph{IEEE Transactions on Robotics and Automation}, 20(2):243--255, 2004.
+
+\bibitem[Dijkstra(1959)]{dijkstra1959}
+E.~W. Dijkstra.
+\newblock A note on two problems in connexion with graphs.
+\newblock \emph{Numerische Mathematik}, 1:269--271, 1959.
+
+\bibitem[do~Carmo(1976)]{docarmo1976}
+M.~P. do~Carmo.
+\newblock \emph{Differential Geometry of Curves and Surfaces}.
+\newblock Prentice-Hall, 1976.
 
 \bibitem[Evans(2010)]{evans2010}
 L.~C. Evans.
@@ -524,6 +658,11 @@ M.~E. Gurtin.
 E.~Hairer, S.~P. N{\o}rsett, and G.~Wanner.
 \newblock \emph{Solving Ordinary Differential Equations I: Nonstiff Problems}.
 \newblock Springer, 2nd edition, 1993.
+
+\bibitem[Keller(1968)]{keller1968}
+H.~B. Keller.
+\newblock \emph{Numerical Methods for Two-Point Boundary-Value Problems}.
+\newblock Blaisdell, 1968.
 
 \bibitem[Kierzenka and Shampine(2001)]{kierzenka2001}
 J.~Kierzenka and L.~F. Shampine.
@@ -584,7 +723,6 @@ P.~Virtanen et~al.
 A.~W\"achter and L.~T. Biegler.
 \newblock On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming.
 \newblock \emph{Mathematical Programming}, 106(1):25--57, 2006.
-
 \end{thebibliography}
 
 \end{document}
