@@ -7,6 +7,7 @@ fleet management, and onboard person detection.
 | --- | --- |
 | [`swarm_lab/`](swarm_lab/) | Coverage planner: medial axis, four sweep planners compared side by side, per-drone areas, flight paths, nadir camera plan |
 | `Fleet_manager.py` | Fleet/lane assignment, camera parameters, and delivery-drone dispatch |
+| `docs/` | GitHub Pages version of the comparison page. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |
 | `NIDAR_YOLO.py` | YOLO-World open-vocabulary detection (`person`, `tree`, ...) |
 | `weights/`, `yolov8s-worldv2.pt` | Model weights (Git LFS) |
 
