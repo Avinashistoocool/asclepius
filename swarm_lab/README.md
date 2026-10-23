@@ -56,3 +56,12 @@ front where arrival = t. Drones are spaced evenly along the front, so per-drone 
 Metrics: coverage, peak swath, mission length (fastest drone), max sub-swarms,
 speed spread, and MAT chord folds (where consecutive chords cross).
 
+### Shape complexity panel
+
+Area, perimeter, circularity, solidity (area / hull area), convexity, reflex vertices,
+total turning / 2pi, elongation (principal-axis ratio), max inscribed radius, width ratio
+along the trunk, necks (pinches below 75% of the widest point on both sides), and medial
+tree edges. Composite score 0-100: non-convexity 30%, boundary roughness 25%,
+elongation 15%, width variation 15%, necks 15%. Each planner card also reports its own
+server compute time.
+

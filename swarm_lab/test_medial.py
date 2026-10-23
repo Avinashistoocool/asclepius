@@ -52,6 +52,22 @@ class MedialAxisTests(unittest.TestCase):
                 analyze(**kwargs)
 
 
+class ComplexityTests(unittest.TestCase):
+    def score(self, polygon):
+        from boundary import validate_polygon
+        from complexity import describe
+        return describe(validate_polygon(polygon), analyze(polygon.tolist()))
+
+    def test_ordering_and_necks(self):
+        circle = self.score(preset_boundary({"kind": "circle"}))
+        star = self.score(preset_boundary({"kind": "star", "depth": .55, "arms": 5}))
+        neck = self.score(preset_boundary({"kind": "neck", "depth": .8}))
+        self.assertEqual(circle["score"], 0)
+        self.assertGreater(star["score"], 25)
+        self.assertEqual(neck["necks"], 1)
+        self.assertEqual(star["reflexVertices"], 5)
+
+
 
 if __name__ == "__main__":
     unittest.main()

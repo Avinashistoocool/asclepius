@@ -24,6 +24,7 @@ from skimage.graph import MCP_Geometric
 from skimage.measure import find_contours
 
 from boundary import intersection_parameters, validate_polygon
+from complexity import describe
 from medial_axis import analyze as medial_analyze, resample
 
 METHODS = {
@@ -233,6 +234,10 @@ def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
     levels = np.linspace(.005, .995, 90)
     results = {}
 
+    progress(.16, "Measuring shape complexity")
+    shape = describe(polygon, medial)
+    timings = {}
+    clock = time.perf_counter()
     progress(.18, "MAT: rasterising perpendicular chords")
     field, ends, times = mat_field(grid, polygon, medial["path"])
     index = np.searchsorted(times, levels).clip(0, len(times) - 1)
@@ -242,24 +247,32 @@ def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
                                                 for k in (0, 1))), 1),
                  "folds": round(100 * chord_folds(ends), 1)}
 
+    timings["mat"] = time.perf_counter() - clock
+    clock = time.perf_counter()
     progress(.32, "Lawnmower: projecting onto principal axis")
     field = lawnmower_field(grid, polygon)
     results["lawnmower"] = (field, level_fronts(grid, field, levels))
 
+    timings["lawnmower"] = time.perf_counter() - clock
+    clock = time.perf_counter()
     progress(.45, f"Harmonic: solving Laplace equation on {np.count_nonzero(grid.mask)} cells")
     field = harmonic_field(grid, polygon, caps)
     progress(.65, "Harmonic: extracting level-set fronts")
     results["harmonic"] = (field, level_fronts(grid, field, levels))
 
+    timings["harmonic"] = time.perf_counter() - clock
+    clock = time.perf_counter()
     progress(.75, "Geodesic: fast marching from start cap")
     field = geodesic_field(grid, caps)
     results["geodesic"] = (field, level_fronts(grid, field, levels))
+    timings["geodesic"] = time.perf_counter() - clock
 
     output = {}
     for k, (name, (field, fronts)) in enumerate(results.items()):
         progress(.85 + .13 * k / len(results), f"Scoring {METHODS[name]}")
         frames, stats = summarize(grid, field, fronts, drones, levels)
         stats["folds"] = 0.
+        stats["computeMs"] = round(1000 * timings[name])
         if name == "mat":
             stats.update(mat_extra)
         output[name] = {"label": METHODS[name], "frames": frames, "stats": stats,
@@ -272,6 +285,7 @@ def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
         "start": samples[caps[3]].tolist(),
         "end": samples[caps[4]].tolist(),
         "drones": drones,
+        "complexity": shape,
         "methods": output,
         "elapsedMs": round((time.perf_counter() - started) * 1000),
     }

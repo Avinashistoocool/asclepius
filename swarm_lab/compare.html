@@ -22,6 +22,14 @@ input[type=range]{accent-color:var(--cyan)}label{font-size:12px;color:var(--mute
 canvas{width:100%;aspect-ratio:1;display:block;background:#0c1422;border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}td{padding:2px 0;border-bottom:1px solid #1c2738}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 td.best{color:var(--gold);font-weight:700}
+.shape{display:grid;grid-template-columns:200px 1fr;gap:18px;margin:16px 24px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.score{text-align:center}.score strong{display:block;font-size:44px;line-height:1.1;font-variant-numeric:tabular-nums}.score span{font-size:12px;color:var(--muted)}
+.meter{height:8px;border-radius:5px;background:linear-gradient(90deg,#60dfdd,#ffd08a,#ff7d7d);position:relative;margin-top:8px}
+.meter i{position:absolute;top:-4px;width:3px;height:16px;background:#fff;border-radius:2px}
+.facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 18px;font-size:12px}
+.facts div{display:flex;justify-content:space-between;border-bottom:1px solid #1c2738;padding:2px 0}.facts span{color:var(--muted)}
+.terms{grid-column:1/-1;display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.terms div{flex:1;min-width:130px}.terms b{display:block;height:5px;background:var(--cyan);border-radius:3px;margin-top:3px}
 .notes{padding:0 24px 24px;color:var(--muted);font-size:12px;max-width:1400px}.notes b{color:var(--text)}
 @media(max-width:1200px){.grid{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -44,17 +52,35 @@ td.best{color:var(--gold);font-weight:700}
   <label>Mission time</label><input id="time" type="range" min="0" max="89" value="0" style="flex:1">
   <label><input id="showCoverage" type="checkbox" checked> Swept area</label>
 </div>
+<div class="shape" id="shapePanel" hidden>
+  <div class="score"><span>Shape complexity</span><strong id="score">--</strong><span id="scoreLabel"></span><div class="meter"><i id="needle"></i></div></div>
+  <div class="facts" id="facts"></div>
+  <div class="terms" id="terms"></div>
+</div>
 <div class="grid" id="grid"></div>
 <div class="notes">
   <p><b>Model.</b> Every planner defines an arrival time over the field; the formation at time t is the front where arrival = t. Drones are spaced evenly along the front, so each drone's swath (altitude) is its share of front length. Several front pieces = the swarm has split.</p>
-  <p><b>Peak swath</b>: largest per-drone footprint needed (sets max altitude). <b>Mission</b>: path length of the fastest-moving drone. <b>Speed spread</b>: fastest/slowest drone on the front (1 = everyone flies at the same speed). <b>Chord folds</b>: fraction of MAT steps where consecutive perpendicular chords cross, meaning the rigid formation would sweep backwards. Gold = best in row.</p>
+  <p><b>Peak swath</b>: largest per-drone footprint needed (sets max altitude). <b>Mission</b>: path length of the fastest-moving drone. <b>Speed spread</b>: fastest/slowest drone on the front (1 = everyone flies at the same speed). <b>Chord folds</b>: fraction of MAT steps where consecutive perpendicular chords cross, meaning the rigid formation would sweep backwards. Gold = best in row. <b>Compute ms</b>: server time for that planner only.</p>
+  <p><b>Complexity score</b> (0 = disk, 100 = very complex) weights non-convexity 30%, boundary roughness 25%, elongation 15%, width variation along the medial trunk 15%, and necks (pinch points in inscribed radius) 15%.</p>
 </div>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
 const ORDER=["mat","lawnmower","harmonic","geodesic"];
 const METRICS=[["coverage","Coverage %",1],["peakSwath","Peak swath",-1],["missionLength","Mission",-1],
-  ["maxSubSwarms","Max sub-swarms",-1],["speedSpread","Speed spread",-1],["folds","Chord folds %",-1]];
+  ["maxSubSwarms","Max sub-swarms",-1],["speedSpread","Speed spread",-1],["folds","Chord folds %",-1],["computeMs","Compute ms",-1]];
+const FACTS=[["area","Area"],["perimeter","Perimeter"],["circularity","Circularity (1 = disk)"],["solidity","Solidity (area/hull)"],
+  ["convexity","Convexity (hull/perim)"],["reflexVertices","Reflex vertices"],["bending","Total turning / 2pi"],["elongation","Elongation"],
+  ["maxInscribed","Max inscribed radius"],["widthRatio","Width ratio on trunk"],["necks","Necks"],["medialEdges","Medial tree edges"]];
+const TERMS={nonConvexity:"Non-convexity",boundaryRoughness:"Boundary roughness",elongation:"Elongation",widthVariation:"Width variation",necks:"Necks"};
+function showComplexity(c){
+  $("shapePanel").hidden=false;$("score").textContent=c.score;
+  $("scoreLabel").textContent=c.score<15?"Simple":c.score<35?"Moderate":c.score<60?"Complex":"Very complex";
+  $("needle").style.left=`calc(${Math.min(c.score,100)}% - 1px)`;
+  $("facts").replaceChildren(...FACTS.map(([k,label])=>{const d=document.createElement("div");d.innerHTML=`<span>${label}</span><strong>${c[k]}</strong>`;return d;}));
+  $("terms").replaceChildren(...Object.entries(TERMS).map(([k,label])=>{const d=document.createElement("div");
+    d.innerHTML=`${label} ${(100*c.terms[k]).toFixed(0)}%<b style="width:${100*c.terms[k]}%"></b>`;return d;}));
+}
 let data=null,frame=0,playing=true,last=0,images={};
 
 function rng(seed){let a=seed>>>0;return()=>{a=(a+0x6D2B79F5)>>>0;let t=Math.imul(a^(a>>>15),1|a);t^=t+Math.imul(t^(t>>>7),61|t);return((t^(t>>>14))>>>0)/4294967296;};}
@@ -138,7 +164,7 @@ async function run(){
       if(done)break;
     }
     if(!result)throw new Error("No result received.");
-    data=result;frame=0;$("time").max=data.methods.mat.frames.length-1;buildCards();draw();
+    data=result;frame=0;$("time").max=data.methods.mat.frames.length-1;showComplexity(data.complexity);buildCards();draw();
     setProgress(1,`Done in ${data.elapsedMs} ms`);
   }catch(e){setProgress(0,e.message,true);}
   finally{$("run").disabled=false;}
