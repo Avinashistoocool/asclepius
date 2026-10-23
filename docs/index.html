@@ -3,81 +3,453 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Swarm Sweep Comparison</title>
-<link rel="icon" href="data:,">
+<title>Asclepius / Swarm Sweep Lab</title>
+<meta name="description" content="Compare drone-swarm coverage planners on any field shape, in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23ccff00'/%3E%3Ctext x='16' y='22' font-family='monospace' font-weight='700' font-size='16' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{color-scheme:dark;--bg:#090e18;--panel:#111927;--line:#263448;--muted:#9aacc3;--text:#eaf0fb;--cyan:#60dfdd;--gold:#ffd08a}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}
-header{padding:16px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:16px}
-h1{margin:0;font-size:22px}h1 span{color:var(--cyan)}header a{color:var(--cyan)}.local{font-size:12px;color:var(--muted)}
-.bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:14px 24px;border-bottom:1px solid var(--line)}
-button,select,input{font:inherit;color:var(--text)}button,select,input[type=number]{background:#172335;border:1px solid #34445e;border-radius:7px;padding:6px 10px}
-button.primary{background:var(--cyan);color:#08252b;font-weight:700;border-color:var(--cyan)}button:disabled{opacity:.5}
-input[type=range]{accent-color:var(--cyan)}label{font-size:12px;color:var(--muted)}
-.progress{height:8px;background:#0c1422;border:1px solid #294159;border-radius:6px;overflow:hidden;width:260px}
-.progress>div{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--gold));transition:width .15s}
-#progressText{font-size:12px;color:var(--muted);min-width:320px}#progressText.error{color:#ffb4ad}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:16px 24px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
-.card h2{margin:0 0 6px;font-size:13px}.card h2 small{color:var(--muted);font-weight:400}
-canvas{width:100%;aspect-ratio:1;display:block;background:#0c1422;border-radius:8px}
-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}td{padding:2px 0;border-bottom:1px solid #1c2738}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
-td.best{color:var(--gold);font-weight:700}
-.shape{display:grid;grid-template-columns:200px 1fr;gap:18px;margin:16px 24px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
-.score{text-align:center}.score strong{display:block;font-size:44px;line-height:1.1;font-variant-numeric:tabular-nums}.score span{font-size:12px;color:var(--muted)}
-.meter{height:8px;border-radius:5px;background:linear-gradient(90deg,#60dfdd,#ffd08a,#ff7d7d);position:relative;margin-top:8px}
-.meter i{position:absolute;top:-4px;width:3px;height:16px;background:#fff;border-radius:2px}
-.facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 18px;font-size:12px}
-.facts div{display:flex;justify-content:space-between;border-bottom:1px solid #1c2738;padding:2px 0}.facts span{color:var(--muted)}
-.terms{grid-column:1/-1;display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
-.terms div{flex:1;min-width:130px}.terms b{display:block;height:5px;background:var(--cyan);border-radius:3px;margin-top:3px}
-.notes{padding:0 24px 24px;color:var(--muted);font-size:12px;max-width:1400px}.notes b{color:var(--text)}
-@media(max-width:1200px){.grid{grid-template-columns:repeat(2,1fr)}}
+:root{
+  color-scheme:dark;
+  --shell:#000;--surface:#0c0c0c;--lime:#ccff00;--emerald:#10b981;
+  --text:#ebebeb;--text2:rgba(235,235,235,.6);--text3:rgba(235,235,235,.3);
+  --glass:rgba(255,255,255,.03);--glass-line:rgba(255,255,255,.1);
+  --ease:cubic-bezier(.4,0,.2,1);
+  --sans:"Space Grotesk",ui-sans-serif,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
+  --noise:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--shell);color:var(--text);font:400 15px/1.55 var(--sans);-webkit-font-smoothing:antialiased;padding:16px}
+a{color:inherit}
+::selection{background:var(--lime);color:#000}
+
+/* ---------- floating shell ---------- */
+.shell{position:relative;max-width:1600px;margin:0 auto;background:var(--surface);border-radius:2.5rem;
+  box-shadow:0 0 0 1px rgba(255,255,255,.1),0 40px 120px -20px rgba(0,0,0,.9);overflow:hidden;isolation:isolate}
+.shell::before{content:"";position:absolute;inset:0;z-index:-2;pointer-events:none;
+  background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);
+  background-size:60px 60px;mask-image:linear-gradient(180deg,#000 0,#000 55%,transparent 100%)}
+.shell::after{content:"";position:absolute;inset:0;z-index:50;pointer-events:none;background-image:var(--noise);opacity:.15;mix-blend-mode:overlay}
+.sphere{position:absolute;z-index:-1;border-radius:50%;filter:blur(120px);pointer-events:none}
+.sphere.a{width:560px;height:560px;top:-180px;right:-120px;background:radial-gradient(circle,rgba(204,255,0,.32),transparent 70%)}
+.sphere.b{width:480px;height:480px;top:900px;left:-200px;background:radial-gradient(circle,rgba(16,185,129,.28),transparent 70%)}
+.sphere.c{width:420px;height:420px;top:1900px;right:10%;background:radial-gradient(circle,rgba(204,255,0,.16),transparent 70%)}
+
+/* ---------- primitives ---------- */
+.glass{background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--glass-line)}
+.mono{font-family:var(--mono);text-transform:uppercase;letter-spacing:.2em;font-size:10px}
+.tag{display:inline-flex;align-items:center;gap:.5rem;font-family:var(--mono);text-transform:uppercase;letter-spacing:.2em;font-size:10px;color:var(--text2)}
+.tag i{width:6px;height:6px;border-radius:50%;background:var(--lime);box-shadow:0 0 10px var(--lime);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+.float{animation:float 6s infinite ease-in-out}
+.float.d2{animation-delay:-2s}.float.d3{animation-delay:-4s}
+h1,h2,h3{font-family:var(--sans);letter-spacing:-.06em;margin:0;font-weight:600;line-height:.95}
+.btn{font:600 14px var(--sans);letter-spacing:-.01em;border-radius:9999px;padding:.75rem 1.4rem;cursor:pointer;
+  border:1px solid var(--glass-line);background:rgba(255,255,255,.05);color:var(--text);transition:all .3s var(--ease)}
+.btn:hover{border-color:rgba(204,255,0,.5);color:var(--lime)}
+.btn.neon{background:var(--lime);color:#000;font-weight:700;border-color:var(--lime);padding:1rem 2rem;box-shadow:0 0 30px rgba(204,255,0,.3)}
+.btn.neon:hover{transform:scale(1.05);color:#000;box-shadow:0 0 50px rgba(204,255,0,.45)}
+.btn:disabled{opacity:.3;cursor:wait;transform:none}
+.btn.white{background:#fff;color:#000;border-color:#fff}
+
+/* ---------- nav ---------- */
+nav{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:28px 40px}
+.logo{display:flex;align-items:center;gap:12px;text-decoration:none;font-weight:600;letter-spacing:-.04em;font-size:18px}
+.logo b{display:grid;place-items:center;width:40px;height:40px;border-radius:.75rem;background:var(--lime);color:#000;font:700 18px var(--mono)}
+.pill{display:flex;gap:4px;padding:6px;border-radius:9999px;background:rgba(255,255,255,.05);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--glass-line)}
+.pill a{padding:8px 16px;border-radius:9999px;text-decoration:none;color:rgba(255,255,255,.7);font-size:13px;transition:all .3s var(--ease)}
+.pill a:hover{color:#000;background:var(--lime)}
+.navright{display:flex;align-items:center;gap:18px}
+
+/* ---------- hero ---------- */
+.hero{display:grid;grid-template-columns:repeat(12,1fr);gap:32px;padding:150px 40px 80px;align-items:center}
+.hero-l{grid-column:span 7}
+.hero-r{grid-column:span 5;position:relative}
+.hero h1{font-size:clamp(3.6rem,7.6vw,7.5rem);line-height:.85;font-weight:600;margin:22px 0 28px}
+.hero h1 em{font-style:italic;font-weight:300;background:linear-gradient(100deg,var(--lime) 10%,#fff 90%);-webkit-background-clip:text;background-clip:text;color:transparent;padding-right:.08em}
+.lede{font-size:18px;color:var(--text2);max-width:560px;margin:0 0 34px;font-weight:400}
+.lede b{color:var(--text);font-weight:500}
+.cta-row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
+.hero-stats{display:flex;gap:36px;margin-top:48px;flex-wrap:wrap}
+.hero-stats div{display:flex;flex-direction:column;gap:6px}
+.hero-stats strong{font-size:34px;letter-spacing:-.05em;font-weight:500}
+.hero-stats span{color:var(--text3)}
+.mock{border-radius:2rem;padding:14px;position:relative}
+.mock-top{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.12)}.dots i:first-child{background:var(--lime)}
+#heroCanvas{width:100%;aspect-ratio:1;display:block;border-radius:1.5rem;background:#070707}
+.fcard{position:absolute;border-radius:1.5rem;padding:14px 18px;z-index:3}
+.fcard strong{display:block;font-size:30px;letter-spacing:-.05em;font-weight:600;line-height:1.05}
+.fcard.one{left:-46px;top:90px}
+.fcard.two{right:-26px;bottom:110px}
+.fcard.two strong{color:var(--lime)}
+.cursor{position:absolute;z-index:4;left:42%;top:44%;max-width:56%;display:flex;align-items:flex-start;gap:4px;pointer-events:none}
+.cursor svg{filter:drop-shadow(0 0 8px rgba(204,255,0,.6))}
+.cursor span{background:var(--lime);color:#000;font:700 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;padding:5px 10px;border-radius:9999px;margin-top:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+/* ---------- sections ---------- */
+section.block{padding:40px 40px 72px}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:28px;flex-wrap:wrap}
+.head h2{font-size:clamp(2.4rem,4.6vw,4.4rem);font-weight:500}
+.head h2 em{font-style:italic;font-weight:300;color:var(--lime)}
+.head p{max-width:440px;color:var(--text2);margin:0}
+
+/* ---------- bento ---------- */
+.bento{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.cell{border-radius:2.5rem;border:1px solid var(--glass-line);background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  padding:28px;position:relative;overflow:hidden;transition:border-color .4s var(--ease),transform .4s var(--ease)}
+.cell:hover{border-color:rgba(204,255,0,.4)}
+.cell .mono{color:var(--text3)}
+.s2{grid-column:span 2}.r2{grid-row:span 2}
+.cell.accent{background:var(--lime);color:#000;border-color:var(--lime)}
+.cell.accent::after{content:"";position:absolute;inset:0;background-image:var(--noise);opacity:.35;mix-blend-mode:multiply;pointer-events:none}
+.cell.accent .mono{color:rgba(0,0,0,.55)}
+
+/* controls */
+.controls{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 16px;margin-top:20px}
+.field{display:flex;flex-direction:column;gap:7px}
+.field label{font-family:var(--mono);text-transform:uppercase;letter-spacing:.2em;font-size:10px;color:var(--text3)}
+.field input,.field select{font:500 15px var(--mono);color:var(--text);background:rgba(255,255,255,.04);border:1px solid var(--glass-line);border-radius:1rem;padding:11px 14px;outline:none;transition:border-color .3s var(--ease);width:100%;-webkit-appearance:none;appearance:none}
+.field select{background-image:linear-gradient(45deg,transparent 50%,var(--lime) 50%),linear-gradient(135deg,var(--lime) 50%,transparent 50%);background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+.field select option{background:#0c0c0c}
+.field input:focus,.field select:focus{border-color:var(--lime)}
+.ctl-actions{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+
+/* progress accent */
+.big{font-size:84px;font-weight:600;letter-spacing:-.07em;line-height:.9;margin:16px 0 10px}
+.big small{font-size:28px;font-weight:400}
+.track{height:10px;background:rgba(0,0,0,.15);border-radius:9999px;overflow:hidden;margin:16px 0 12px;position:relative;z-index:1}
+#progressBar{height:100%;width:0;background:#000;border-radius:9999px;transition:width .25s var(--ease)}
+#progressText{font:500 12px var(--mono);letter-spacing:.02em;min-height:36px;position:relative;z-index:1}
+#progressText.error{color:#7a0000}
+
+/* playback */
+.playback{display:flex;flex-direction:column;gap:18px;justify-content:space-between;height:100%}
+.time-row{display:flex;align-items:center;gap:14px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:9999px;background:rgba(255,255,255,.12);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--lime);box-shadow:0 0 18px rgba(204,255,0,.6);cursor:pointer}
+input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:var(--lime);cursor:pointer}
+.toggles{display:flex;flex-wrap:wrap;gap:8px}
+.toggles label{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:9999px;border:1px solid var(--glass-line);font-size:13px;color:var(--text2);cursor:pointer;transition:all .3s var(--ease);user-select:none}
+.toggles input{display:none}
+.toggles label:has(input:checked){border-color:rgba(204,255,0,.5);color:var(--lime);background:rgba(204,255,0,.06)}
+.toggles label::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--text3)}
+.toggles label:has(input:checked)::before{background:var(--lime);box-shadow:0 0 8px var(--lime)}
+.clock{font:500 42px var(--mono);letter-spacing:-.04em}
+.clock small{font-size:14px;color:var(--text3)}
+
+/* planner cards */
+.planners{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px}
+.planner{padding:16px 16px 22px;border-radius:2.5rem}
+.planner header{display:flex;justify-content:space-between;align-items:center;padding:8px 10px 14px}
+.planner h3{font-size:22px;font-weight:500;letter-spacing:-.05em}
+.planner .idx{font:500 11px var(--mono);color:var(--text3);letter-spacing:.2em}
+.planner canvas{width:100%;aspect-ratio:1;display:block;border-radius:1.8rem;background:#070707;border:1px solid rgba(255,255,255,.06)}
+.planner.win{border-color:rgba(204,255,0,.55);box-shadow:0 0 0 1px rgba(204,255,0,.25),0 0 60px -10px rgba(204,255,0,.25)}
+.badge{font:700 9px var(--mono);letter-spacing:.18em;text-transform:uppercase;background:var(--lime);color:#000;padding:5px 10px;border-radius:9999px}
+table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}
+td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05)}
+td:first-child{color:var(--text2)}
+td:last-child{text-align:right;font:500 13px var(--mono);font-variant-numeric:tabular-nums}
+td.best{color:var(--lime)}
+td.best::after{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--lime);margin-left:8px;vertical-align:middle;box-shadow:0 0 6px var(--lime)}
+.skeleton{min-height:360px;display:grid;place-items:center;color:var(--text3)}
+
+/* complexity bento */
+.score-wrap{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+#score{font-size:120px;font-weight:600;letter-spacing:-.08em;line-height:.8}
+#scoreLabel{font-size:22px;font-weight:300;font-style:italic;color:var(--lime)}
+.bars{display:flex;align-items:flex-end;gap:14px;height:220px;margin-top:30px;padding-top:10px}
+.bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;height:100%;justify-content:flex-end}
+.bar .col{width:100%;border-radius:1.2rem;background:linear-gradient(180deg,var(--lime),rgba(204,255,0,.15));min-height:6px;transition:height .8s var(--ease);position:relative}
+.bar .col::after{content:attr(data-v);position:absolute;top:-22px;left:0;right:0;text-align:center;font:500 11px var(--mono);color:var(--text)}
+.bar span{font:500 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text3);text-align:center;line-height:1.3}
+.facts{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;margin-top:18px}
+.facts div{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px}
+.facts span{color:var(--text2)}.facts strong{font:500 12px var(--mono)}
+.swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:20px}
+.swatches div{aspect-ratio:1;border-radius:1rem;display:grid;place-items:end start;padding:7px;font:700 10px var(--mono);color:rgba(0,0,0,.65)}
+.legend{display:flex;flex-direction:column;gap:10px;margin-top:22px;font-size:13px;color:var(--text2)}
+.legend div{display:flex;align-items:center;gap:10px}
+.legend i{width:22px;height:4px;border-radius:9999px}
+.rec h3{font-size:44px;font-weight:600;letter-spacing:-.06em;margin:16px 0 10px;position:relative;z-index:1}
+.rec p{margin:0;position:relative;z-index:1;font-size:14px}
+.rec .why{font:500 11px var(--mono);margin-top:14px;opacity:.7;position:relative;z-index:1}
+
+/* ---------- contrast section ---------- */
+.contrast{background:#e5e5e5;color:#000;border-radius:4rem 4rem 0 0;padding:96px 40px 110px;position:relative;margin-top:30px}
+.contrast::after{content:"";position:absolute;inset:0;background-image:var(--noise);opacity:.25;mix-blend-mode:multiply;pointer-events:none;border-radius:inherit}
+.contrast .grid2{display:grid;grid-template-columns:7fr 5fr;gap:64px;align-items:center;position:relative;z-index:1}
+.contrast .tag{color:rgba(0,0,0,.55)}.contrast .tag i{background:#000;box-shadow:none}
+.contrast h2{font-size:clamp(2.6rem,5vw,4.8rem);font-weight:500;margin:20px 0 48px}
+.contrast h2 em{font-style:italic;font-weight:300}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:30px}
+.steps li{display:grid;grid-template-columns:58px 1fr;gap:22px;align-items:start}
+.steps .n{width:58px;height:58px;border-radius:50%;border:1px solid rgba(0,0,0,.25);display:grid;place-items:center;font:500 13px var(--mono)}
+.steps li:hover .n{background:#000;color:var(--lime)}
+.steps .n{transition:all .3s var(--ease)}
+.steps h3{font-size:26px;font-weight:600;letter-spacing:-.05em;margin:4px 0 8px;line-height:1.1}
+.steps p{margin:0;color:rgba(0,0,0,.62);font-size:15px;max-width:620px}
+.steps code{font:500 12.5px var(--mono);background:rgba(0,0,0,.07);padding:2px 6px;border-radius:6px}
+.portrait{position:relative;justify-self:center;width:100%;max-width:520px}
+.portrait canvas{width:100%;aspect-ratio:1;border-radius:50%;display:block;background:#d4d4d4;filter:grayscale(1) contrast(1.1);box-shadow:0 30px 80px -30px rgba(0,0,0,.45)}
+.quote{position:absolute;left:6%;right:6%;bottom:-36px;border-radius:2rem;padding:22px 26px;background:rgba(10,10,10,.55);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.18);color:#fff}
+.quote p{margin:0 0 12px;font-size:17px;line-height:1.4;letter-spacing:-.02em}
+.quote .mono{color:rgba(255,255,255,.55)}
+
+/* ---------- footer ---------- */
+footer{background:#000;position:relative;overflow:hidden;padding:110px 40px 36px}
+.watermark{position:absolute;left:50%;top:10px;transform:translateX(-50%);font:700 clamp(6rem,16vw,14rem)/1 var(--sans);letter-spacing:-.08em;color:rgba(255,255,255,.05);white-space:nowrap;pointer-events:none;user-select:none}
+.cta{position:relative;text-align:center;display:flex;flex-direction:column;align-items:center;gap:28px;padding-bottom:90px}
+.cta h2{font-size:clamp(2.4rem,5vw,4.6rem);font-weight:500;max-width:900px}
+.cta h2 em{font-style:italic;font-weight:300;color:var(--lime)}
+.mega{position:relative;overflow:hidden;font:700 20px var(--sans);letter-spacing:-.02em;background:var(--lime);color:#000;border:0;border-radius:9999px;padding:1.5rem 3.4rem;cursor:pointer;box-shadow:0 0 40px rgba(204,255,0,.35);isolation:isolate}
+.mega::before{content:"";position:absolute;inset:0;background:#fff;transform:translateY(101%);transition:transform .45s var(--ease);z-index:-1}
+.mega:hover::before{transform:translateY(0)}
+.foot{display:grid;grid-template-columns:1fr auto 1fr;gap:24px;align-items:center;border-top:1px solid rgba(255,255,255,.1);padding-top:28px;position:relative}
+.foot .links{display:flex;gap:22px;flex-wrap:wrap}
+.foot .links a{text-decoration:none;color:var(--text2);font-size:13px;transition:color .3s var(--ease)}
+.foot .links a:hover{color:var(--lime)}
+.social{display:flex;gap:10px}
+.social a{width:42px;height:42px;border-radius:50%;border:1px solid rgba(255,255,255,.2);display:grid;place-items:center;transition:all .3s var(--ease)}
+.social a:hover{border-color:var(--lime);color:var(--lime)}
+.copy{justify-self:end;color:var(--text3)}
+
+/* ---------- responsive ---------- */
+@media(max-width:1280px){.planners{grid-template-columns:repeat(2,1fr)}.fcard.one{left:-10px}.fcard.two{right:-6px}}
+@media(max-width:1100px){
+  .hero{grid-template-columns:1fr;padding-top:130px}.hero-l,.hero-r{grid-column:auto}
+  .bento{grid-template-columns:repeat(2,1fr)}
+  .contrast .grid2{grid-template-columns:1fr}.portrait{margin-top:20px}
+  .pill{display:none}
+}
+@media(max-width:700px){
+  body{padding:8px}nav,.hero,section.block,.contrast,footer{padding-left:20px;padding-right:20px}
+  .bento,.planners{grid-template-columns:1fr}.s2,.r2{grid-column:auto;grid-row:auto}
+  .controls{grid-template-columns:1fr 1fr}.navright .tag{display:none}
+  .foot{grid-template-columns:1fr}.copy{justify-self:start}.fcard,.cursor{display:none}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<header><h1>Swarm sweep <span>comparison</span></h1><span class="local">Runs entirely in your browser (Web Worker, no server) &middot; <a href="../README.md" id="repoLink">Project README</a></span></header>
-<div class="bar">
-  <select id="shape">
-    <option value="blob">Random blob</option><option value="star">Star</option><option value="flower">Flower</option>
-    <option value="crescent">C-bend</option><option value="neck">Narrow neck</option><option value="ellipse">Ellipse</option>
-  </select>
-  <label>Seed <input id="seed" type="number" value="7" style="width:110px"></label>
-  <button id="newSeed">New random</button>
-  <label>Drones <input id="drones" type="number" min="2" max="64" value="12" style="width:70px"></label>
-  <label>Camera HFOV&deg; <input id="hfov" type="number" min="10" max="150" value="70" style="width:64px"></label>
-  <label>VFOV&deg; <input id="vfov" type="number" min="10" max="150" value="55" style="width:64px"></label>
-  <label>Overlap % <input id="overlap" type="number" min="0" max="100" value="10" style="width:60px"></label>
-  <button id="run" class="primary">Compare</button>
-  <div class="progress"><div id="progressBar"></div></div><span id="progressText">Idle</span>
+<div class="shell">
+  <div class="sphere a"></div><div class="sphere b"></div><div class="sphere c"></div>
+
+  <nav>
+    <a class="logo" href="#top"><b>A</b>Asclepius</a>
+    <div class="pill">
+      <a href="#lab">Lab</a><a href="#planners">Planners</a><a href="#shape-sec">Shape</a><a href="#method">Method</a>
+    </div>
+    <div class="navright">
+      <span class="tag" id="sysTag"><i></i><span id="sysText">System idle</span></span>
+      <a class="btn white" id="repoLink" href="../README.md">Read the docs</a>
+    </div>
+  </nav>
+
+  <!-- ===== HERO ===== -->
+  <section class="hero" id="top">
+    <div class="hero-l">
+      <span class="tag"><i></i>NIDAR Rescueswarm / coverage engine</span>
+      <h1>Sweep any field.<br><em>Miss nothing.</em></h1>
+      <p class="lede">Four swarm planners, one arrival-time model. Draw a field, set your camera, and compare
+        <b>medial axis</b>, <b>lawnmower</b>, <b>harmonic</b> and <b>geodesic</b> sweeps. Every drone gets its area, path,
+        heading and altitude, and the nadir plan is checked until <b>100% of the ground is imaged</b>.</p>
+      <div class="cta-row">
+        <a class="btn neon" href="#lab">Launch the lab &rarr;</a>
+        <span class="tag">Runs entirely in your browser</span>
+      </div>
+      <div class="hero-stats">
+        <div><strong id="hsCoverage">--</strong><span class="mono">Nadir coverage</span></div>
+        <div><strong id="hsAlt">--</strong><span class="mono">Best max altitude</span></div>
+        <div><strong id="hsTime">--</strong><span class="mono">Compute time</span></div>
+      </div>
+    </div>
+    <div class="hero-r">
+      <div class="mock glass">
+        <div class="mock-top"><div class="dots"><i></i><i></i><i></i></div><span class="mono" style="color:var(--text3)" id="heroLabel">Live preview</span></div>
+        <canvas id="heroCanvas" width="600" height="600"></canvas>
+      </div>
+      <div class="fcard one glass float"><span class="mono" style="color:var(--text3)">Complexity</span><strong id="fcScore">--</strong></div>
+      <div class="fcard two glass float d2"><span class="mono" style="color:var(--text3)">Drones</span><strong id="fcDrones">--</strong></div>
+      <div class="cursor float d3">
+        <svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 2l18 8-8 2.5L10 21z" fill="#ccff00" stroke="#000" stroke-width="1.2"/></svg>
+        <span id="cursorText">Swarm cursor</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== LAB CONTROLS ===== -->
+  <section class="block" id="lab">
+    <div class="head">
+      <h2>Mission <em>control</em></h2>
+      <p>Pick a field and a camera. The planner runs in a Web Worker and streams progress for each stage.</p>
+    </div>
+    <div class="bento">
+      <div class="cell s2">
+        <span class="mono">01 / Field &amp; fleet</span>
+        <div class="controls">
+          <div class="field"><label for="shape">Field shape</label>
+            <select id="shape">
+              <option value="blob">Random blob</option><option value="star">Star</option><option value="flower">Flower</option>
+              <option value="crescent">C-bend</option><option value="neck">Narrow neck</option><option value="ellipse">Ellipse</option>
+            </select></div>
+          <div class="field"><label for="seed">Seed</label><input id="seed" type="number" value="7"></div>
+          <div class="field"><label for="drones">Drones</label><input id="drones" type="number" min="2" max="64" value="12"></div>
+          <div class="field"><label for="hfov">Camera HFOV&deg;</label><input id="hfov" type="number" min="10" max="150" value="70"></div>
+          <div class="field"><label for="vfov">Camera VFOV&deg;</label><input id="vfov" type="number" min="10" max="150" value="55"></div>
+          <div class="field"><label for="overlap">Overlap %</label><input id="overlap" type="number" min="0" max="100" value="10"></div>
+        </div>
+        <div class="ctl-actions">
+          <button id="run" class="btn neon">Run comparison</button>
+          <button id="newSeed" class="btn">New random field</button>
+        </div>
+      </div>
+
+      <div class="cell accent">
+        <span class="mono">02 / Pipeline</span>
+        <div class="big"><span id="pct">0</span><small>%</small></div>
+        <div class="track"><div id="progressBar"></div></div>
+        <div id="progressText">Idle</div>
+      </div>
+
+      <div class="cell">
+        <div class="playback">
+          <span class="mono">03 / Mission clock</span>
+          <div class="clock"><span id="clockT">0.00</span> <small>/ 1.00 T</small></div>
+          <div class="time-row">
+            <button id="play" class="btn" style="padding:.6rem 1.1rem">Pause</button>
+            <input id="time" type="range" min="0" max="89" value="0" aria-label="Mission time">
+          </div>
+        </div>
+      </div>
+
+      <div class="cell s2" style="grid-column:span 4">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap">
+          <span class="mono">04 / Layers</span>
+          <div class="field" style="flex-direction:row;align-items:center;gap:12px">
+            <label for="view" style="white-space:nowrap">Ground view</label>
+            <select id="view" style="min-width:230px">
+              <option value="lanes">Drone areas</option><option value="coverage">Swept so far</option>
+              <option value="imaged">Nadir images so far</option><option value="overlapMap">Final image overlap</option><option value="none">None</option>
+            </select>
+          </div>
+          <div class="toggles">
+            <label><input id="showPaths" type="checkbox" checked>Drone paths</label>
+            <label><input id="showFront" type="checkbox" checked>Sweep front</label>
+            <label><input id="showFootprints" type="checkbox" checked>Camera footprints</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PLANNERS ===== -->
+    <div class="head" id="planners" style="margin-top:72px">
+      <h2>Four planners, <em>one field</em></h2>
+      <p>Lime values are the best in each row. The highlighted card has the lowest max altitude at full nadir coverage.</p>
+    </div>
+    <div class="planners" id="grid"><div class="cell skeleton" style="grid-column:1/-1"><span class="tag"><i></i>Computing first field</span></div></div>
+  </section>
+
+  <!-- ===== SHAPE ===== -->
+  <section class="block" id="shape-sec">
+    <div class="head">
+      <h2>Shape <em>intelligence</em></h2>
+      <p>How hard the field is to sweep: non-convexity, roughness, elongation, width variation and necks along the medial trunk.</p>
+    </div>
+    <div class="bento" id="shapePanel">
+      <div class="cell s2 r2">
+        <span class="mono">Complexity index / 0-100</span>
+        <div class="score-wrap" style="margin-top:18px">
+          <div><div id="score">--</div></div>
+          <div style="text-align:right"><div id="scoreLabel">&nbsp;</div><span class="mono" style="color:var(--text3)">30 / 25 / 15 / 15 / 15 weighting</span></div>
+        </div>
+        <div class="bars" id="terms"></div>
+      </div>
+      <div class="cell r2">
+        <span class="mono">Fleet palette</span>
+        <div class="swatches" id="swatches"></div>
+        <div class="legend">
+          <div><i style="background:#ccff00"></i>Sweep front</div>
+          <div><i style="background:#10b981"></i>Start cap / MAT trunk</div>
+          <div><i style="background:#fff"></i>End cap / camera footprint</div>
+          <div><i style="background:#ff3b3b"></i>Unimaged ground</div>
+        </div>
+      </div>
+      <div class="cell accent rec">
+        <span class="mono">Recommended planner</span>
+        <h3 id="recName">--</h3>
+        <p id="recWhy">Run a field to get a recommendation.</p>
+        <div class="why" id="recMeta"></div>
+      </div>
+      <div class="cell">
+        <span class="mono">Geometry</span>
+        <div class="facts" id="facts"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== METHOD (contrast) ===== -->
+  <section class="contrast" id="method">
+    <div class="grid2">
+      <div>
+        <span class="tag"><i></i>Methodology</span>
+        <h2>One model.<br><em>Every planner.</em></h2>
+        <ol class="steps">
+          <li><span class="n">01</span><div><h3>Medial axis backbone</h3>
+            <p>A Voronoi diagram of the sampled boundary gives the centres of maximal inscribed disks. Spurs are pruned by boundary arc length, and the longest path of the MST becomes the <b>trunk</b>. Its two ends are the start and end caps.</p></div></li>
+          <li><span class="n">02</span><div><h3>Arrival-time fields</h3>
+            <p>Each planner is a scalar field <code>T(x)</code>: chord time along the trunk, PCA projection, the harmonic solution <code>&nabla;&sup2;T = 0</code>, or geodesic distance. The swarm formation at time <code>t</code> is the level set <code>T = t</code>.</p></div></li>
+          <li><span class="n">03</span><div><h3>Lanes &amp; flight paths</h3>
+            <p>Fronts are oriented consistently in time and parameterised by arc length <code>s</code>. Drone <code>i</code> owns <code>s &isin; [i/N, (i+1)/N)</code>, which partitions the field. It flies the middle of its lane.</p></div></li>
+          <li><span class="n">04</span><div><h3>Nadir guarantee</h3>
+            <p>Each drone's rotated footprint <code>2h&middot;tan(FOV/2)</code> must reach every cell in its area. The footprints are stamped along every path, and any gap raises the owner's altitude until coverage is <b>100%</b>.</p></div></li>
+        </ol>
+      </div>
+      <div class="portrait">
+        <canvas id="portrait" width="700" height="700"></canvas>
+        <div class="quote">
+          <p id="quoteText">&ldquo;Harmonic fronts never fold or cusp, so they hold the lowest altitudes on bent and necked fields. Geodesic and lawnmower fronts keep workloads the most balanced.&rdquo;</p>
+          <span class="mono">Asclepius / benchmark notes</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer>
+    <div class="watermark">SWARM</div>
+    <div class="cta">
+      <span class="tag"><i></i>Ready when you are</span>
+      <h2>Throw a harder field <em>at the swarm.</em></h2>
+      <button class="mega" id="megaRun">Generate &amp; sweep a new field</button>
+    </div>
+    <div class="foot">
+      <div class="links">
+        <a id="footDocs" href="../README.md">Documentation</a>
+        <a id="footRepo" href="#">Source</a>
+        <a href="#method">Methodology</a>
+        <a href="#lab">Lab</a>
+      </div>
+      <div class="social">
+        <a id="socialGh" href="#" aria-label="GitHub"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.75 2.69 1.25 3.35.95.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg></a>
+        <a href="#top" aria-label="Back to top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg></a>
+      </div>
+      <div class="copy mono">&copy; 2026 Team Asclepius &middot; NIDAR</div>
+    </div>
+  </footer>
 </div>
-<div class="bar">
-  <button id="play">Pause</button>
-  <label>Mission time</label><input id="time" type="range" min="0" max="89" value="0" style="flex:1">
-  <label>View <select id="view"><option value="lanes">Drone areas</option><option value="coverage">Swept so far</option><option value="imaged">Nadir images so far</option><option value="overlapMap">Final image overlap</option><option value="none">None</option></select></label>
-  <label><input id="showPaths" type="checkbox" checked> Drone paths</label>
-  <label><input id="showFront" type="checkbox" checked> Front</label>
-  <label><input id="showFootprints" type="checkbox" checked> Camera footprints</label>
-</div>
-<div class="shape" id="shapePanel" hidden>
-  <div class="score"><span>Shape complexity</span><strong id="score">--</strong><span id="scoreLabel"></span><div class="meter"><i id="needle"></i></div></div>
-  <div class="facts" id="facts"></div>
-  <div class="terms" id="terms"></div>
-</div>
-<div class="grid" id="grid"></div>
-<div class="notes">
-  <p><b>Model.</b> Every planner defines an arrival time over the field; the formation at time t is the front where arrival = t. Drones are spaced evenly along the front, so each drone's swath (altitude) is its share of front length. Several front pieces = the swarm has split.</p>
-  <p><b>Peak swath</b>: largest per-drone footprint needed (sets max altitude). <b>Mission</b>: path length of the fastest-moving drone. <b>Speed spread</b>: fastest/slowest drone on the front (1 = everyone flies at the same speed). <b>Chord folds</b>: fraction of MAT steps where consecutive perpendicular chords cross, meaning the rigid formation would sweep backwards. Gold = best in row. <b>Drone areas</b>: each colour is the region one drone is responsible for (its lane between neighbours on the front); the line of the same colour is that drone's flight path. <b>Area balance</b>: smallest / largest drone area. <b>Transit jumps</b>: times a drone must hop to a different piece of a split front.</p>
-  <p><b>Nadir camera.</b> Arrows show each drone's heading (direction of travel); the white rectangle is its downward camera footprint, 2&middot;h&middot;tan(HFOV/2) across track by 2&middot;h&middot;tan(VFOV/2) along track, rotated to the heading. Altitude h is the lowest that lets the footprint reach every cell of that drone's area, plus the overlap margin. The footprints are then stamped along every path; any field cell still unimaged raises the altitude of the drone that owns it, and this repeats until <b>Nadir coverage = 100%</b>. "Final image overlap" shows unimaged cells in red (there should be none) and how many drones image each cell. <b>Compute ms</b>: in-browser time for that planner's field and fronts only.</p>
-  <p><b>Complexity score</b> (0 = disk, 100 = very complex) weights non-convexity 30%, boundary roughness 25%, elongation 15%, width variation along the medial trunk 15%, and necks (pinch points in inscribed radius) 15%.</p>
-</div>
+
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
 const ORDER=["mat","lawnmower","harmonic","geodesic"];
 const METRICS=[["coverage","Coverage %",1],["peakSwath","Peak swath",-1],["missionLength","Mission",-1],
   ["maxSubSwarms","Max sub-swarms",-1],["speedSpread","Speed spread",-1],["folds","Chord folds %",-1],["areaBalance","Area balance",1],["longestDronePath","Longest drone path",-1],["transits","Transit jumps",-1],["cameraCoverage","Nadir coverage %",1],["gapCells","Unimaged cells",-1],["maxAltitude","Max altitude",-1],["meanAltitude","Mean altitude",-1],["meanOverlap","Mean image overlap",-1],["computeMs","Compute ms",-1]];
-const RAD=Math.PI/180;
+const LIME="#ccff00",EMERALD="#10b981",RAD=Math.PI/180;
 function footprint(ctx,x,y,heading,altitude,color,fill){
   const tx=Math.tan(+data.camera.hfov*RAD/2),ty=Math.tan(+data.camera.vfov*RAD/2),a=altitude*ty,c=altitude*tx;
   const h=[Math.cos(heading*RAD),Math.sin(heading*RAD)],n=[-h[1],h[0]];
@@ -86,27 +458,33 @@ function footprint(ctx,x,y,heading,altitude,color,fill){
   ctx.closePath();if(fill){ctx.fillStyle=fill;ctx.fill();}ctx.strokeStyle=color;ctx.lineWidth=1;ctx.stroke();
 }
 function arrow(ctx,x,y,heading,color){
-  const h=[Math.cos(heading*RAD),Math.sin(heading*RAD)],n=[-h[1],h[0]],L=11;
-  ctx.beginPath();ctx.moveTo(x+h[0]*L,y+h[1]*L);ctx.lineTo(x-h[0]*5+n[0]*5,y-h[1]*5+n[1]*5);
-  ctx.lineTo(x-h[0]*2,y-h[1]*2);ctx.lineTo(x-h[0]*5-n[0]*5,y-h[1]*5-n[1]*5);ctx.closePath();
-  ctx.fillStyle=color;ctx.fill();ctx.strokeStyle="#0c1422";ctx.lineWidth=1.2;ctx.stroke();
+  const h=[Math.cos(heading*RAD),Math.sin(heading*RAD)],n=[-h[1],h[0]],L=12;
+  ctx.beginPath();ctx.moveTo(x+h[0]*L,y+h[1]*L);ctx.lineTo(x-h[0]*5+n[0]*6,y-h[1]*5+n[1]*6);
+  ctx.lineTo(x-h[0]*2,y-h[1]*2);ctx.lineTo(x-h[0]*5-n[0]*6,y-h[1]*5-n[1]*6);ctx.closePath();
+  ctx.fillStyle=color;ctx.fill();ctx.strokeStyle="#000";ctx.lineWidth=1.4;ctx.stroke();
 }
-const hue=(i,n)=>`hsl(${Math.round(360*i/n)},75%,60%)`;
-function hsl(i,n){const h=i/n*6,c=.75*(1-Math.abs(2*.6-1)),x=c*(1-Math.abs(h%2-1)),m=.6-c/2;
-  const [r,g,b]=h<1?[c,x,0]:h<2?[x,c,0]:h<3?[0,c,x]:h<4?[0,x,c]:h<5?[x,0,c]:[c,0,x];return [255*(r+m),255*(g+m),255*(b+m)];}
-const FACTS=[["area","Area"],["perimeter","Perimeter"],["circularity","Circularity (1 = disk)"],["solidity","Solidity (area/hull)"],
-  ["convexity","Convexity (hull/perim)"],["reflexVertices","Reflex vertices"],["bending","Total turning / 2pi"],["elongation","Elongation"],
-  ["maxInscribed","Max inscribed radius"],["widthRatio","Width ratio on trunk"],["necks","Necks"],["medialEdges","Medial tree edges"]];
-const TERMS={nonConvexity:"Non-convexity",boundaryRoughness:"Boundary roughness",elongation:"Elongation",widthVariation:"Width variation",necks:"Necks"};
+// Drone palette: hues spread evenly but skewed away from pure red so gaps stay distinct.
+const hue=(i,n)=>`hsl(${Math.round(20+320*i/n)},85%,62%)`;
+function hsl(i,n){const H=(20+320*i/n)/60,s=.85,l=.62,c=(1-Math.abs(2*l-1))*s,x=c*(1-Math.abs(H%2-1)),m=l-c/2;
+  const [r,g,b]=H<1?[c,x,0]:H<2?[x,c,0]:H<3?[0,c,x]:H<4?[0,x,c]:H<5?[x,0,c]:[c,0,x];return [255*(r+m),255*(g+m),255*(b+m)];}
+const FACTS=[["area","Area"],["perimeter","Perimeter"],["circularity","Circularity"],["solidity","Solidity"],
+  ["convexity","Convexity"],["reflexVertices","Reflex vertices"],["bending","Turning / 2&pi;"],["elongation","Elongation"],
+  ["maxInscribed","Max inscribed r"],["widthRatio","Width ratio"],["necks","Necks"],["medialEdges","Medial edges"]];
+const TERMS={nonConvexity:"Non-convex",boundaryRoughness:"Roughness",elongation:"Elongation",widthVariation:"Width var.",necks:"Necks"};
 function showComplexity(c){
-  $("shapePanel").hidden=false;$("score").textContent=c.score;
+  $("score").textContent=c.score;
   $("scoreLabel").textContent=c.score<15?"Simple":c.score<35?"Moderate":c.score<60?"Complex":"Very complex";
-  $("needle").style.left=`calc(${Math.min(c.score,100)}% - 1px)`;
+  $("fcScore").textContent=c.score;
   $("facts").replaceChildren(...FACTS.map(([k,label])=>{const d=document.createElement("div");d.innerHTML=`<span>${label}</span><strong>${c[k]}</strong>`;return d;}));
-  $("terms").replaceChildren(...Object.entries(TERMS).map(([k,label])=>{const d=document.createElement("div");
-    d.innerHTML=`${label} ${(100*c.terms[k]).toFixed(0)}%<b style="width:${100*c.terms[k]}%"></b>`;return d;}));
+  $("terms").replaceChildren(...Object.entries(TERMS).map(([k,label])=>{const d=document.createElement("div");d.className="bar";
+    const v=Math.round(100*c.terms[k]);d.innerHTML=`<div class="col" data-v="${v}%" style="height:0%"></div><span>${label}</span>`;
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{d.firstChild.style.height=Math.max(v,3)+"%";}));return d;}));
 }
-let data=null,frame=0,playing=true,last=0,images={};
+function showSwatches(){
+  $("swatches").replaceChildren(...Array.from({length:data.drones},(_,i)=>{const d=document.createElement("div");d.style.background=hue(i,data.drones);d.textContent=String(i+1).padStart(2,"0");return d;}));
+  $("fcDrones").textContent=data.drones;
+}
+let data=null,frame=0,playing=true,last=0,images={},winner=null;
 
 function rng(seed){let a=seed>>>0;return()=>{a=(a+0x6D2B79F5)>>>0;let t=Math.imul(a^(a>>>15),1|a);t^=t+Math.imul(t^(t>>>7),61|t);return((t^(t>>>14))>>>0)/4294967296;};}
 function makeShape(name,seed){
@@ -122,12 +500,34 @@ function makeShape(name,seed){
     out.push([300+r*Math.cos(t)*(name==="ellipse"?1.12:1),300+r*Math.sin(t)*(name==="ellipse"?.63:1)]);}
   return out;
 }
-function setProgress(f,msg,error=false){$("progressBar").style.width=(100*f).toFixed(1)+"%";$("progressText").textContent=`${Math.round(100*f)}% - ${msg}`;$("progressText").classList.toggle("error",error);}
+function setProgress(f,msg,error=false){
+  $("progressBar").style.width=(100*f).toFixed(1)+"%";$("pct").textContent=Math.round(100*f);
+  $("progressText").textContent=msg;$("progressText").classList.toggle("error",error);
+  $("sysText").textContent=error?"Error":f>=1?"System ready":f>0?"Computing "+Math.round(100*f)+"%":"Starting";
+}
+function pickWinner(){
+  // Lowest max altitude among planners that image every cell; ties go to better area balance.
+  const ok=ORDER.filter(k=>data.methods[k].stats.gapCells===0);
+  const pool=ok.length?ok:ORDER;
+  return pool.reduce((a,b)=>{const A=data.methods[a].stats,B=data.methods[b].stats;
+    return B.maxAltitude<A.maxAltitude-1e-9||(Math.abs(B.maxAltitude-A.maxAltitude)<1e-9&&B.areaBalance>A.areaBalance)?b:a;});
+}
+function showSummary(){
+  winner=pickWinner();const w=data.methods[winner],s=w.stats;
+  $("recName").textContent=w.label.split(/[+(]/)[0].trim();
+  $("recWhy").textContent=`Lowest max altitude (${s.maxAltitude}) with ${s.cameraCoverage}% nadir coverage and ${s.areaBalance} area balance.`;
+  $("recMeta").textContent=`${s.maxSubSwarms} SUB-SWARM${s.maxSubSwarms>1?"S":""} / ${s.transits} TRANSITS / ${s.longestDronePath} PATH`;
+  $("hsCoverage").textContent=Math.min(...ORDER.map(k=>data.methods[k].stats.cameraCoverage))+"%";
+  $("hsAlt").textContent=s.maxAltitude;
+  $("hsTime").textContent=(data.elapsedMs/1000).toFixed(2)+"s";
+  $("heroLabel").textContent=w.label;
+  $("cursorText").textContent=`${data.drones} drones / alt ${s.maxAltitude}`;
+}
 
 function buildCards(){
-  $("grid").replaceChildren(...ORDER.map(key=>{
-    const m=data.methods[key],card=document.createElement("div");card.className="card";
-    card.innerHTML=`<h2>${m.label}</h2><canvas width="600" height="600" id="c_${key}"></canvas><table id="t_${key}"></table>`;
+  $("grid").replaceChildren(...ORDER.map((key,n)=>{
+    const m=data.methods[key],card=document.createElement("div");card.className="cell planner"+(key===winner?" win":"");
+    card.innerHTML=`<header><div><div class="idx">0${n+1} / ${key.toUpperCase()}</div><h3>${m.label}</h3></div>${key===winner?'<span class="badge">Best</span>':""}</header><canvas width="600" height="600" id="c_${key}"></canvas><table id="t_${key}"></table>`;
     return card;
   }));
   for(const [k,label,dir] of METRICS){
@@ -145,69 +545,95 @@ function buildCards(){
     images[key]={canvas,c,ctx:canvas.getContext("2d"),img:canvas.getContext("2d").createImageData(c.width,c.height)};
     const l=data.methods[key].lanes,lc=document.createElement("canvas");lc.width=l.width;lc.height=l.height;
     const lctx=lc.getContext("2d"),limg=lctx.createImageData(l.width,l.height),palette=Array.from({length:data.drones},(_,i)=>hsl(i,data.drones));
-    l.values.forEach((v,i)=>{const j=4*i;if(v>=0){const [r,g,b]=palette[v];limg.data[j]=r;limg.data[j+1]=g;limg.data[j+2]=b;limg.data[j+3]=120;}
-      else if(v===-1){limg.data[j]=200;limg.data[j+1]=60;limg.data[j+2]=60;limg.data[j+3]=170;}});
+    l.values.forEach((v,i)=>{const j=4*i;if(v>=0){const [r,g,b]=palette[v];limg.data[j]=r;limg.data[j+1]=g;limg.data[j+2]=b;limg.data[j+3]=95;}
+      else if(v===-1){limg.data[j]=255;limg.data[j+1]=59;limg.data[j+2]=59;limg.data[j+3]=190;}});
     lctx.putImageData(limg,0,0);images[key].lanes=lc;
     const o=data.methods[key].imaged,oc=document.createElement("canvas");oc.width=o.width;oc.height=o.height;
     const octx=oc.getContext("2d"),oimg=octx.createImageData(o.width,o.height);
-    o.values.forEach((v,i)=>{const j=4*i;if(v===0){oimg.data[j]=255;oimg.data[j+1]=40;oimg.data[j+2]=40;oimg.data[j+3]=230;}
-      else if(v>0){const t=Math.min((v-1)/3,1);oimg.data[j]=40+200*t;oimg.data[j+1]=170-60*t;oimg.data[j+2]=120;oimg.data[j+3]=140;}});
+    o.values.forEach((v,i)=>{const j=4*i;if(v===0){oimg.data[j]=255;oimg.data[j+1]=59;oimg.data[j+2]=59;oimg.data[j+3]=235;}
+      else if(v>0){const t=Math.min((v-1)/3,1);oimg.data[j]=16+188*t;oimg.data[j+1]=185+70*t;oimg.data[j+2]=129*(1-t);oimg.data[j+3]=90+80*t;}});
     octx.putImageData(oimg,0,0);images[key].overlap=oc;
-    // Pre-render cumulative nadir images by frame so scrubbing is instant.
-    images[key].imagedFrames=null;
   }
+}
+function fieldPath(ctx){ctx.beginPath();data.boundary.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();}
+function drawGrid(ctx){
+  ctx.strokeStyle="rgba(255,255,255,.04)";ctx.lineWidth=1;ctx.beginPath();
+  for(let n=30;n<600;n+=30){ctx.moveTo(n,0);ctx.lineTo(n,600);ctx.moveTo(0,n);ctx.lineTo(600,n);}ctx.stroke();
+}
+function drawMethod(canvas,key){
+  const ctx=canvas.getContext("2d"),m=data.methods[key],f=m.frames[frame],t=f.t;
+  ctx.clearRect(0,0,600,600);drawGrid(ctx);
+  fieldPath(ctx);ctx.fillStyle="#111";ctx.fill();
+  const view=$("view").value;
+  if(view==="overlapMap"){
+    ctx.save();ctx.clip();ctx.imageSmoothingEnabled=false;ctx.drawImage(images[key].overlap,0,0,600,600);ctx.restore();
+  } else if(view==="imaged"){
+    ctx.save();ctx.clip();
+    m.drones.forEach((d,i)=>{const n=Math.min(d.path.length,Math.round((frame+1)*d.path.length/m.frames.length));
+      const fill=hue(i,data.drones).replace("hsl","hsla").replace("62%)","62%,0.16)");
+      for(let k=0;k<n;k++)footprint(ctx,d.path[k][0],d.path[k][1],d.heading[k],d.altitude[k],"transparent",fill);});
+    ctx.restore();
+  } else if(view==="lanes"){
+    ctx.save();ctx.clip();ctx.imageSmoothingEnabled=false;ctx.drawImage(images[key].lanes,0,0,600,600);ctx.restore();
+  } else if(view==="coverage"){
+    const im=images[key],v=im.c.values,d=im.img.data;
+    for(let i=0;i<v.length;i++){const j=4*i,swept=v[i]>=0&&v[i]<=t,miss=v[i]===-1;
+      d[j]=miss?255:204;d[j+1]=miss?59:255;d[j+2]=miss?59:0;d[j+3]=miss?190:swept?60:0;}
+    im.ctx.putImageData(im.img,0,0);
+    ctx.save();ctx.clip();ctx.imageSmoothingEnabled=true;ctx.drawImage(im.canvas,0,0,600,600);ctx.restore();
+  }
+  fieldPath(ctx);ctx.strokeStyle="rgba(255,255,255,.85)";ctx.lineWidth=2;ctx.stroke();
+  if(key==="mat"){ctx.beginPath();data.trunk.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle="rgba(16,185,129,.7)";ctx.setLineDash([6,6]);ctx.lineWidth=1.6;ctx.stroke();ctx.setLineDash([]);}
+  if($("showPaths").checked) m.drones.forEach((d,i)=>{
+    ctx.beginPath();let prev=null;
+    d.path.forEach(p=>{if(prev&&Math.hypot(p[0]-prev[0],p[1]-prev[1])>25)ctx.moveTo(...p);else if(prev)ctx.lineTo(...p);else ctx.moveTo(...p);prev=p;});
+    ctx.strokeStyle=hue(i,data.drones);ctx.globalAlpha=.85;ctx.lineWidth=1.6;ctx.stroke();ctx.globalAlpha=1;
+  });
+  if($("showFront").checked) for(const front of f.fronts){
+    ctx.beginPath();front.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));
+    ctx.shadowColor=LIME;ctx.shadowBlur=14;ctx.strokeStyle=LIME;ctx.lineWidth=3;ctx.stroke();ctx.shadowBlur=0;
+  }
+  f.drones.forEach(([x,y,s,heading,altitude],i)=>{
+    const color=f.drones.length===data.drones?hue(i,data.drones):LIME;
+    if(heading===undefined){ctx.beginPath();ctx.arc(x,y,4.5,0,2*Math.PI);ctx.fillStyle=color;ctx.fill();return;}
+    if($("showFootprints").checked)footprint(ctx,x,y,heading,altitude,"rgba(255,255,255,.75)",null);
+    arrow(ctx,x,y,heading,color);
+  });
+  for(const [p,c] of [[data.start,EMERALD],[data.end,"#fff"]]){
+    ctx.beginPath();ctx.arc(p[0],p[1],11,0,2*Math.PI);ctx.fillStyle=c+"33";ctx.fill();
+    ctx.beginPath();ctx.arc(p[0],p[1],5.5,0,2*Math.PI);ctx.fillStyle=c;ctx.fill();
+  }
+}
+function drawPortrait(){
+  const c=$("portrait"),ctx=c.getContext("2d"),W=c.width,s=W/600;
+  ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,W,W);ctx.fillStyle="#d9d9d9";ctx.fillRect(0,0,W,W);
+  ctx.setTransform(s,0,0,s,0,0);
+  const key=winner||"harmonic",m=data.methods[key];
+  ctx.strokeStyle="rgba(0,0,0,.06)";ctx.lineWidth=1;ctx.beginPath();for(let n=20;n<600;n+=20){ctx.moveTo(n,0);ctx.lineTo(n,600);ctx.moveTo(0,n);ctx.lineTo(600,n);}ctx.stroke();
+  fieldPath(ctx);ctx.fillStyle="#f4f4f4";ctx.fill();
+  ctx.save();ctx.clip();ctx.globalAlpha=.55;ctx.imageSmoothingEnabled=false;ctx.drawImage(images[key].lanes,0,0,600,600);ctx.restore();ctx.globalAlpha=1;
+  m.frames.forEach((f,k)=>{if(k%6)return;for(const front of f.fronts){ctx.beginPath();front.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle="rgba(0,0,0,.35)";ctx.lineWidth=1;ctx.stroke();}});
+  m.drones.forEach(d=>{ctx.beginPath();let prev=null;d.path.forEach(p=>{if(prev&&Math.hypot(p[0]-prev[0],p[1]-prev[1])>25)ctx.moveTo(...p);else if(prev)ctx.lineTo(...p);else ctx.moveTo(...p);prev=p;});ctx.strokeStyle="#111";ctx.lineWidth=1.4;ctx.stroke();});
+  fieldPath(ctx);ctx.strokeStyle="#000";ctx.lineWidth=2.5;ctx.stroke();
+  ctx.setTransform(1,0,0,1,0,0);
 }
 function draw(){
   if(!data)return;
-  const t=data.methods.mat.frames[frame].t;
-  for(const key of ORDER){
-    const canvas=$("c_"+key),ctx=canvas.getContext("2d"),m=data.methods[key],f=m.frames[frame];
-    ctx.clearRect(0,0,600,600);
-    ctx.beginPath();data.boundary.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();
-    ctx.fillStyle="#152b3b";ctx.fill();
-    if($("view").value==="overlapMap"){
-      ctx.save();ctx.clip();ctx.imageSmoothingEnabled=false;ctx.drawImage(images[key].overlap,0,0,600,600);ctx.restore();
-    } else if($("view").value==="imaged"){
-      ctx.save();ctx.clip();
-      m.drones.forEach((d,i)=>{const n=Math.min(d.path.length,Math.round((frame+1)*d.path.length/m.frames.length));
-        for(let k=0;k<n;k++)footprint(ctx,d.path[k][0],d.path[k][1],d.heading[k],d.altitude[k],"transparent",hue(i,data.drones).replace("60%)","60%,0.18)").replace("hsl","hsla"));});
-      ctx.restore();
-    } else if($("view").value==="lanes"){
-      ctx.save();ctx.clip();ctx.imageSmoothingEnabled=false;ctx.drawImage(images[key].lanes,0,0,600,600);ctx.restore();
-    } else if($("view").value==="coverage"){
-      const im=images[key],v=im.c.values,d=im.img.data;
-      for(let i=0;i<v.length;i++){const j=4*i,swept=v[i]>=0&&v[i]<=t,miss=v[i]===-1;
-        d[j]=miss?200:40;d[j+1]=miss?60:110;d[j+2]=miss?60:140;d[j+3]=swept||miss?150:0;}
-      im.ctx.putImageData(im.img,0,0);
-      ctx.save();ctx.clip();ctx.imageSmoothingEnabled=true;ctx.drawImage(im.canvas,0,0,600,600);ctx.restore();
-    }
-    ctx.beginPath();data.boundary.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();
-    ctx.strokeStyle="#60dfdd";ctx.lineWidth=2;ctx.stroke();
-    if(key==="mat"){ctx.beginPath();data.trunk.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle="#ffd08a60";ctx.lineWidth=1.5;ctx.stroke();}
-    if($("showPaths").checked) m.drones.forEach((d,i)=>{
-      ctx.beginPath();let prev=null;
-      d.path.forEach(p=>{if(prev&&Math.hypot(p[0]-prev[0],p[1]-prev[1])>25)ctx.moveTo(...p);else if(prev)ctx.lineTo(...p);else ctx.moveTo(...p);prev=p;});
-      ctx.strokeStyle=hue(i,data.drones);ctx.lineWidth=1.6;ctx.stroke();
-    });
-    if($("showFront").checked) for(const front of f.fronts){ctx.beginPath();front.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle="#ffd08a";ctx.lineWidth=2.5;ctx.stroke();}
-    f.drones.forEach(([x,y,s,heading,altitude],i)=>{
-      const color=f.drones.length===data.drones?hue(i,data.drones):"#ff7de9";
-      if(heading===undefined){ctx.beginPath();ctx.arc(x,y,4.5,0,2*Math.PI);ctx.fillStyle=color;ctx.fill();return;}
-      if($("showFootprints").checked)footprint(ctx,x,y,heading,altitude,"#ffffffb0",null);
-      arrow(ctx,x,y,heading,color);
-    });
-    for(const [p,c] of [[data.start,"#7dff9a"],[data.end,"#ff977d"]]){ctx.beginPath();ctx.arc(p[0],p[1],6,0,2*Math.PI);ctx.fillStyle=c;ctx.fill();}
-  }
+  for(const key of ORDER)drawMethod($("c_"+key),key);
+  drawMethod($("heroCanvas"),winner||"harmonic");
+  $("clockT").textContent=data.methods.mat.frames[frame].t.toFixed(2);
 }
 function tick(now){
   if(data&&playing&&now-last>90){frame=(frame+1)%data.methods.mat.frames.length;$("time").value=frame;last=now;draw();}
   requestAnimationFrame(tick);
 }
-// On GitHub Pages (user.github.io/repo/...) link to the README on github.com; elsewhere use the relative file.
+// On GitHub Pages (user.github.io/repo/...) link to github.com; elsewhere use relative files.
 (()=>{const host=location.hostname.match(/^([^.]+)\.github\.io$/i);if(!host)return;
   const parts=location.pathname.split("/").filter(Boolean);if(parts.length&&/\.html?$/i.test(parts[parts.length-1]))parts.pop();
-  const repo=parts.shift();if(!repo)return;parts.pop();
-  $("repoLink").href=`https://github.com/${host[1]}/${repo}/blob/HEAD/${parts.concat("README.md").join("/")}`;})();
+  const repo=parts.shift();if(!repo)return;
+  const base=`https://github.com/${host[1]}/${repo}`;
+  for(const id of ["repoLink","footDocs"])$(id).href=`${base}#readme`;
+  for(const id of ["footRepo","socialGh"])$(id).href=base;})();
 let worker=null,cancel=null;
 function compute(body){
   // A fresh worker per run lets a new request cancel one still in progress.
@@ -225,19 +651,22 @@ function compute(body){
   });
 }
 async function run(){
-  $("run").disabled=true;setProgress(0,"Starting in-browser planner");
+  $("run").disabled=true;$("megaRun").disabled=true;setProgress(0,"Starting in-browser planner");
   try{
     const body={points:makeShape($("shape").value,+$("seed").value),drones:+$("drones").value,
       hfov:+$("hfov").value,vfov:+$("vfov").value,overlap:+$("overlap").value/100};
     const result=await compute(body);
     if(!result)throw new Error("No result received.");
-    data=result;frame=0;$("time").max=data.methods.mat.frames.length-1;showComplexity(data.complexity);buildCards();draw();
+    data=result;frame=0;$("time").max=data.methods.mat.frames.length-1;
+    showComplexity(data.complexity);winner=pickWinner();buildCards();showSummary();showSwatches();drawPortrait();draw();
     setProgress(1,`Done in ${data.elapsedMs} ms`);
   }catch(e){if(e.message!=="Superseded by a newer run.")setProgress(0,e.message,true);}
-  finally{$("run").disabled=false;}
+  finally{$("run").disabled=false;$("megaRun").disabled=false;}
 }
+function newRandom(){$("seed").value=crypto.getRandomValues(new Uint32Array(1))[0];$("shape").value="blob";run();}
 $("run").onclick=run;
-$("newSeed").onclick=()=>{$("seed").value=crypto.getRandomValues(new Uint32Array(1))[0];$("shape").value="blob";run();};
+$("newSeed").onclick=newRandom;
+$("megaRun").onclick=()=>{document.getElementById("planners").scrollIntoView({behavior:"smooth"});newRandom();};
 $("shape").onchange=run;
 $("play").onclick=()=>{playing=!playing;$("play").textContent=playing?"Pause":"Play";};
 $("time").oninput=()=>{frame=+$("time").value;playing=false;$("play").textContent="Play";draw();};
