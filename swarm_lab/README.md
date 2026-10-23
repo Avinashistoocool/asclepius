@@ -32,8 +32,6 @@ The MAT is *equidistant to the boundary*. That equals "bisects its perpendicular
 only where the two walls are locally parallel. The chord-midpoint offset is shown as a
 diagnostic, not as an acceptance criterion.
 
-The previous chord-bisection solver lives in `legacy/` for reference.
-
 ## Tests
 
 ```powershell
