@@ -65,3 +65,10 @@ tree edges. Composite score 0-100: non-convexity 30%, boundary roughness 25%,
 elongation 15%, width variation 15%, necks 15%. Each planner card also reports its own
 server compute time.
 
+### Drone areas and paths
+
+Each front is oriented consistently over time and given a lane coordinate s in [0, 1].
+Drone i owns s in [i/N, (i+1)/N): every swept cell gets the lane of its nearest front
+point, giving a partition of the field into N coloured areas. The drone's path is the
+centre of its lane (s = (i + 0.5)/N) traced through all frames. Card metrics add area
+balance (min/max area), longest drone path, and transit jumps between split pieces.

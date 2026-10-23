@@ -50,7 +50,9 @@ td.best{color:var(--gold);font-weight:700}
 <div class="bar">
   <button id="play">Pause</button>
   <label>Mission time</label><input id="time" type="range" min="0" max="89" value="0" style="flex:1">
-  <label><input id="showCoverage" type="checkbox" checked> Swept area</label>
+  <label>View <select id="view"><option value="lanes">Drone areas</option><option value="coverage">Swept so far</option><option value="none">None</option></select></label>
+  <label><input id="showPaths" type="checkbox" checked> Drone paths</label>
+  <label><input id="showFront" type="checkbox" checked> Front</label>
 </div>
 <div class="shape" id="shapePanel" hidden>
   <div class="score"><span>Shape complexity</span><strong id="score">--</strong><span id="scoreLabel"></span><div class="meter"><i id="needle"></i></div></div>
@@ -60,7 +62,7 @@ td.best{color:var(--gold);font-weight:700}
 <div class="grid" id="grid"></div>
 <div class="notes">
   <p><b>Model.</b> Every planner defines an arrival time over the field; the formation at time t is the front where arrival = t. Drones are spaced evenly along the front, so each drone's swath (altitude) is its share of front length. Several front pieces = the swarm has split.</p>
-  <p><b>Peak swath</b>: largest per-drone footprint needed (sets max altitude). <b>Mission</b>: path length of the fastest-moving drone. <b>Speed spread</b>: fastest/slowest drone on the front (1 = everyone flies at the same speed). <b>Chord folds</b>: fraction of MAT steps where consecutive perpendicular chords cross, meaning the rigid formation would sweep backwards. Gold = best in row. <b>Compute ms</b>: server time for that planner only.</p>
+  <p><b>Peak swath</b>: largest per-drone footprint needed (sets max altitude). <b>Mission</b>: path length of the fastest-moving drone. <b>Speed spread</b>: fastest/slowest drone on the front (1 = everyone flies at the same speed). <b>Chord folds</b>: fraction of MAT steps where consecutive perpendicular chords cross, meaning the rigid formation would sweep backwards. Gold = best in row. <b>Drone areas</b>: each colour is the region one drone is responsible for (its lane between neighbours on the front); the line of the same colour is that drone's flight path. <b>Area balance</b>: smallest / largest drone area. <b>Transit jumps</b>: times a drone must hop to a different piece of a split front. <b>Compute ms</b>: server time for that planner only.</p>
   <p><b>Complexity score</b> (0 = disk, 100 = very complex) weights non-convexity 30%, boundary roughness 25%, elongation 15%, width variation along the medial trunk 15%, and necks (pinch points in inscribed radius) 15%.</p>
 </div>
 <script>
@@ -68,7 +70,10 @@ td.best{color:var(--gold);font-weight:700}
 const $=id=>document.getElementById(id);
 const ORDER=["mat","lawnmower","harmonic","geodesic"];
 const METRICS=[["coverage","Coverage %",1],["peakSwath","Peak swath",-1],["missionLength","Mission",-1],
-  ["maxSubSwarms","Max sub-swarms",-1],["speedSpread","Speed spread",-1],["folds","Chord folds %",-1],["computeMs","Compute ms",-1]];
+  ["maxSubSwarms","Max sub-swarms",-1],["speedSpread","Speed spread",-1],["folds","Chord folds %",-1],["areaBalance","Area balance",1],["longestDronePath","Longest drone path",-1],["transits","Transit jumps",-1],["computeMs","Compute ms",-1]];
+const hue=(i,n)=>`hsl(${Math.round(360*i/n)},75%,60%)`;
+function hsl(i,n){const h=i/n*6,c=.75*(1-Math.abs(2*.6-1)),x=c*(1-Math.abs(h%2-1)),m=.6-c/2;
+  const [r,g,b]=h<1?[c,x,0]:h<2?[x,c,0]:h<3?[0,c,x]:h<4?[0,x,c]:h<5?[x,0,c]:[c,0,x];return [255*(r+m),255*(g+m),255*(b+m)];}
 const FACTS=[["area","Area"],["perimeter","Perimeter"],["circularity","Circularity (1 = disk)"],["solidity","Solidity (area/hull)"],
   ["convexity","Convexity (hull/perim)"],["reflexVertices","Reflex vertices"],["bending","Total turning / 2pi"],["elongation","Elongation"],
   ["maxInscribed","Max inscribed radius"],["widthRatio","Width ratio on trunk"],["necks","Necks"],["medialEdges","Medial tree edges"]];
@@ -118,6 +123,11 @@ function buildCards(){
   for(const key of ORDER){
     const c=data.methods[key].coverage,canvas=document.createElement("canvas");canvas.width=c.width;canvas.height=c.height;
     images[key]={canvas,c,ctx:canvas.getContext("2d"),img:canvas.getContext("2d").createImageData(c.width,c.height)};
+    const l=data.methods[key].lanes,lc=document.createElement("canvas");lc.width=l.width;lc.height=l.height;
+    const lctx=lc.getContext("2d"),limg=lctx.createImageData(l.width,l.height),palette=Array.from({length:data.drones},(_,i)=>hsl(i,data.drones));
+    l.values.forEach((v,i)=>{const j=4*i;if(v>=0){const [r,g,b]=palette[v];limg.data[j]=r;limg.data[j+1]=g;limg.data[j+2]=b;limg.data[j+3]=120;}
+      else if(v===-1){limg.data[j]=200;limg.data[j+1]=60;limg.data[j+2]=60;limg.data[j+3]=170;}});
+    lctx.putImageData(limg,0,0);images[key].lanes=lc;
   }
 }
 function draw(){
@@ -128,7 +138,9 @@ function draw(){
     ctx.clearRect(0,0,600,600);
     ctx.beginPath();data.boundary.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();
     ctx.fillStyle="#152b3b";ctx.fill();
-    if($("showCoverage").checked){
+    if($("view").value==="lanes"){
+      ctx.save();ctx.clip();ctx.imageSmoothingEnabled=false;ctx.drawImage(images[key].lanes,0,0,600,600);ctx.restore();
+    } else if($("view").value==="coverage"){
       const im=images[key],v=im.c.values,d=im.img.data;
       for(let i=0;i<v.length;i++){const j=4*i,swept=v[i]>=0&&v[i]<=t,miss=v[i]===-1;
         d[j]=miss?200:40;d[j+1]=miss?60:110;d[j+2]=miss?60:140;d[j+3]=swept||miss?150:0;}
@@ -138,11 +150,17 @@ function draw(){
     ctx.beginPath();data.boundary.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();
     ctx.strokeStyle="#60dfdd";ctx.lineWidth=2;ctx.stroke();
     if(key==="mat"){ctx.beginPath();data.trunk.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle="#ffd08a60";ctx.lineWidth=1.5;ctx.stroke();}
-    for(const front of f.fronts){ctx.beginPath();front.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle="#ffd08a";ctx.lineWidth=2.5;ctx.stroke();}
-    for(const [x,y,s] of f.drones){
-      ctx.beginPath();ctx.arc(x,y,s/2,0,2*Math.PI);ctx.strokeStyle="#b8d1f455";ctx.lineWidth=1;ctx.stroke();
-      ctx.beginPath();ctx.arc(x,y,3.5,0,2*Math.PI);ctx.fillStyle="#ff7de9";ctx.fill();
-    }
+    if($("showPaths").checked) m.drones.forEach((d,i)=>{
+      ctx.beginPath();let prev=null;
+      d.path.forEach(p=>{if(prev&&Math.hypot(p[0]-prev[0],p[1]-prev[1])>25)ctx.moveTo(...p);else if(prev)ctx.lineTo(...p);else ctx.moveTo(...p);prev=p;});
+      ctx.strokeStyle=hue(i,data.drones);ctx.lineWidth=1.6;ctx.stroke();
+    });
+    if($("showFront").checked) for(const front of f.fronts){ctx.beginPath();front.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle="#ffd08a";ctx.lineWidth=2.5;ctx.stroke();}
+    f.drones.forEach(([x,y,s],i)=>{
+      ctx.beginPath();ctx.arc(x,y,s/2,0,2*Math.PI);ctx.strokeStyle="#ffffff40";ctx.lineWidth=1;ctx.stroke();
+      ctx.beginPath();ctx.arc(x,y,4.5,0,2*Math.PI);ctx.fillStyle=f.drones.length===data.drones?hue(i,data.drones):"#ff7de9";ctx.fill();
+      ctx.strokeStyle="#0c1422";ctx.lineWidth=1.2;ctx.stroke();
+    });
     for(const [p,c] of [[data.start,"#7dff9a"],[data.end,"#ff977d"]]){ctx.beginPath();ctx.arc(p[0],p[1],6,0,2*Math.PI);ctx.fillStyle=c;ctx.fill();}
   }
 }
@@ -174,7 +192,7 @@ $("newSeed").onclick=()=>{$("seed").value=crypto.getRandomValues(new Uint32Array
 $("shape").onchange=run;
 $("play").onclick=()=>{playing=!playing;$("play").textContent=playing?"Pause":"Play";};
 $("time").oninput=()=>{frame=+$("time").value;playing=false;$("play").textContent="Play";draw();};
-$("showCoverage").onchange=draw;
+for(const id of ["view","showPaths","showFront"])$(id).onchange=draw;
 run();requestAnimationFrame(tick);
 </script>
 </body>

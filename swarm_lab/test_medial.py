@@ -67,6 +67,15 @@ class ComplexityTests(unittest.TestCase):
         self.assertEqual(neck["necks"], 1)
         self.assertEqual(star["reflexVertices"], 5)
 
+    def test_lanes_partition_field(self):
+        from sweep import compare
+        result = compare(blob(2).tolist(), drones=8)
+        for name, method in result["methods"].items():
+            lanes = np.asarray(method["lanes"]["values"])
+            self.assertEqual(set(np.unique(lanes[lanes >= 0])), set(range(8)), name)
+            self.assertLess(np.count_nonzero(lanes == -1), 20, name)
+            self.assertEqual(len(method["drones"]), 8)
+
 
 
 if __name__ == "__main__":

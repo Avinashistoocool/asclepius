@@ -169,6 +169,91 @@ def place_drones(components, drones):
     return placed, max(swaths) if swaths else 0., starved
 
 
+def densify(line, spacing=2.):
+    arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))]
+    targets = np.linspace(0, arc[-1], max(int(arc[-1] / spacing), 2))
+    return np.c_[np.interp(targets, arc, line[:, 0]), np.interp(targets, arc, line[:, 1])], targets
+
+
+def orient_fronts(frames_fronts):
+    """Order and orient front pieces so the lane coordinate s in [0, 1] varies continuously in time."""
+    oriented, reference = [], None
+    for components in frames_fronts:
+        pieces = [densify(np.asarray(c, dtype=float))[0] for c in components]
+        if not pieces:
+            oriented.append(([], None))
+            continue
+        if reference is None:
+            pieces = [p if p[0, 0] + p[0, 1] <= p[-1, 0] + p[-1, 1] else p[::-1] for p in pieces]
+            pieces.sort(key=lambda p: tuple(p.mean(axis=0)))
+        else:
+            tree, ref_s = reference
+            keyed = []
+            for p in pieces:
+                s = ref_s[tree.query(p)[1]]
+                quarter = max(len(p) // 4, 1)
+                if s[:quarter].mean() > s[-quarter:].mean():
+                    p, s = p[::-1], s[::-1]
+                keyed.append((float(np.median(s)), p))
+            keyed.sort(key=lambda item: item[0])
+            pieces = [p for _, p in keyed]
+        lengths = [np.r_[0., np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))] for p in pieces]
+        total = sum(length[-1] for length in lengths)
+        offset, lane = 0., []
+        for length in lengths:
+            lane.append((offset + length) / max(total, 1e-12))
+            offset += length[-1]
+        points, lane = np.vstack(pieces), np.concatenate(lane)
+        reference = (cKDTree(points), lane)
+        oriented.append((pieces, reference))
+    return oriented
+
+
+def drone_lanes(grid, field, levels, oriented, drones):
+    """Assign every swept cell to the drone whose lane interval contains its lane coordinate."""
+    lanes = np.full(field.shape, -1, dtype=int)
+    lanes[~grid.mask] = -2
+    finite = np.isfinite(field) & grid.mask
+    nearest = np.clip(np.round((field - levels[0]) / (levels[1] - levels[0])), 0, len(levels) - 1)
+    rows, cols = np.nonzero(finite)
+    frame_index = nearest[rows, cols].astype(int)
+    available = np.array([ref is not None for _, ref in oriented])
+    valid = np.flatnonzero(available)
+    if not len(valid):
+        return lanes
+    # Snap frames without a front (e.g. the very ends) to the closest frame that has one.
+    snap = valid[np.abs(valid[None, :] - np.arange(len(levels))[:, None]).argmin(axis=1)]
+    frame_index = snap[frame_index]
+    xy = grid.xy[rows, cols]
+    for k in np.unique(frame_index):
+        tree, lane = oriented[k][1]
+        pick = frame_index == k
+        s = lane[tree.query(xy[pick])[1]]
+        lanes[rows[pick], cols[pick]] = np.minimum((s * drones).astype(int), drones - 1)
+    return lanes
+
+
+def drone_positions(oriented, drones):
+    """Per frame, each drone sits at the centre of its lane interval on the front (None if no front)."""
+    positions = []
+    for pieces, ref in oriented:
+        if ref is None:
+            positions.append(None)
+            continue
+        tree, lane = ref
+        points = tree.data
+        total = sum(float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1))) for p in pieces)
+        frame = []
+        for i in range(drones):
+            target = (i + .5) / drones
+            j = int(np.searchsorted(lane, target).clip(1, len(lane) - 1))
+            u = (target - lane[j - 1]) / max(lane[j] - lane[j - 1], 1e-12)
+            point = points[j - 1] + np.clip(u, 0, 1) * (points[j] - points[j - 1])
+            frame.append([float(point[0]), float(point[1]), total / drones])
+        positions.append(frame)
+    return positions
+
+
 def summarize(grid, field, frames_fronts, drones, levels):
     covered = np.isfinite(field) & grid.mask
     coverage = np.count_nonzero(covered) / np.count_nonzero(grid.mask)
@@ -177,11 +262,30 @@ def summarize(grid, field, frames_fronts, drones, levels):
     gradient = np.hypot(gx, gy)
     sampler = RegularGridInterpolator((np.arange(grid.size), np.arange(grid.size)), gradient,
                                       bounds_error=False, fill_value=np.nan)
+    oriented = orient_fronts(frames_fronts)
+    lanes = drone_lanes(grid, field, levels, oriented, drones)
+    positions = drone_positions(oriented, drones)
+    paths = [np.array([frame[i][:2] for frame in positions if frame is not None]).reshape(-1, 2)
+             for i in range(drones)]
+    cell = grid.spacing ** 2
+    per_drone = []
+    for i, path in enumerate(paths):
+        steps = np.linalg.norm(np.diff(path, axis=0), axis=1) if len(path) > 1 else np.zeros(0)
+        jumps = steps > 25
+        per_drone.append({
+            "path": path.round(2).tolist(),
+            "area": round(float(np.count_nonzero(lanes == i) * cell), 1),
+            "length": round(float(steps[~jumps].sum()), 1),
+            "transits": int(np.count_nonzero(jumps)),
+        })
+    areas = np.array([d["area"] for d in per_drone])
     frames, mission, spreads = [], 0., []
     peak_swath, max_split, starved_frames, lengths = 0., 0, 0, []
     step = levels[1] - levels[0]
-    for level, components in zip(levels, frames_fronts):
+    for k, (level, components) in enumerate(zip(levels, frames_fronts)):
         placed, swath, starved = place_drones(components, drones)
+        if positions[k] is not None:
+            placed = positions[k]
         peak_swath = max(peak_swath, swath)
         max_split = max(max_split, len(components))
         starved_frames += starved > 0
@@ -204,7 +308,10 @@ def summarize(grid, field, frames_fronts, drones, levels):
         "missionLength": round(float(mission), 1),
         "speedSpread": round(float(np.median(spreads)), 2) if spreads else 1.,
         "starvedFrames": int(starved_frames),
-    }
+        "areaBalance": round(float(areas.min() / max(areas.max(), 1e-9)), 2),
+        "longestDronePath": round(max(d["length"] for d in per_drone), 1),
+        "transits": int(sum(d["transits"] for d in per_drone)),
+    }, per_drone, lanes
 
 
 def level_fronts(grid, field, levels):
@@ -220,6 +327,11 @@ def level_fronts(grid, field, levels):
 def coverage_image(field, mask, step=2):
     image = np.where(mask, np.where(np.isfinite(field), field, -1.), -2.)[::step, ::step]
     return {"width": image.shape[1], "height": image.shape[0], "values": np.round(image, 3).ravel().tolist()}
+
+
+def lane_image(lanes, step=2):
+    image = lanes[::step, ::step]
+    return {"width": image.shape[1], "height": image.shape[0], "values": image.ravel().tolist()}
 
 
 def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
@@ -270,13 +382,14 @@ def compare(points, drones=12, size=200, prune=.05, progress=lambda f, m: None):
     output = {}
     for k, (name, (field, fronts)) in enumerate(results.items()):
         progress(.85 + .13 * k / len(results), f"Scoring {METHODS[name]}")
-        frames, stats = summarize(grid, field, fronts, drones, levels)
+        frames, stats, per_drone, lanes = summarize(grid, field, fronts, drones, levels)
         stats["folds"] = 0.
         stats["computeMs"] = round(1000 * timings[name])
         if name == "mat":
             stats.update(mat_extra)
         output[name] = {"label": METHODS[name], "frames": frames, "stats": stats,
-                        "coverage": coverage_image(field, grid.mask)}
+                        "coverage": coverage_image(field, grid.mask), "drones": per_drone,
+                        "lanes": lane_image(lanes)}
     progress(1., "Done")
     samples = caps[0]
     return {
