@@ -8,12 +8,29 @@ fleet management, and onboard person detection.
 | [`swarm_lab/`](swarm_lab/) | Coverage planner: medial axis, four sweep planners compared side by side, per-drone areas, flight paths, nadir camera plan |
 | `Fleet_manager.py` | Fleet/lane assignment, camera parameters, and delivery-drone dispatch |
 | `docs/` | GitHub Pages version of the comparison page. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |
-| [`paper/`](paper/coverage_theory.md) | Technical report: Lagrangian formulation, Euler–Lagrange equations, boundary-pair ODE, arrival-time relaxation, results, roadmap and references, with equation checks (`verify_derivations.py`), figures (`figures.py`) and tables (`results.py`) |
+| [`paper/`](paper/) | Technical report ([LaTeX](paper/coverage_theory.tex), [Markdown](paper/coverage_theory.md)): the mathematics, the solvers that failed and why, and the method in use. Includes equation checks (`verify_derivations.py`), figures (`figures.py`) and tables (`results.py`) |
 | `NIDAR_YOLO.py` | YOLO-World open-vocabulary detection (`person`, `tree`, ...) |
 | `weights/`, `yolov8s-worldv2.pt` | Model weights (Git LFS) |
 
 **Live comparison page:** <https://avinashistoocool.github.io/asclepius/>. It runs entirely
 in your browser.
+
+## Status (October 2026)
+
+| Area | State |
+| --- | --- |
+| Coverage planner (`swarm_lab/`) | Working. Four planners; 100% nadir coverage on every test field; 8 unit tests pass |
+| Browser demo (`docs/`) | Live on GitHub Pages, Obsidian & Lime UI, runs in a Web Worker in 0.8?2.3 s |
+| Technical report (`paper/`) | LaTeX + Markdown, 4 figures, 2 result tables, 8/8 equation checks pass |
+| Exact chord-bisecting trajectory | Solved for convex fields and symmetric presets; shown not to exist in general for strongly non-convex fields (see the report) |
+| Fleet manager / YOLO detection | Unchanged in this round |
+
+**Key finding.** The harmonic planner (`?T = 0`) needs the lowest maximum altitude on
+every test field. The lawnmower and geodesic planners balance drone workload best.
+
+**Next steps** (detailed in the report): shooting search for exact centre lines in near-convex fields,
+`p`-Laplacian sweeps to minimise the worst altitude, workload-balanced harmonic fields,
+and turn-rate, terrain and GPS constraints for real flight.
 
 ---
 
@@ -64,9 +81,10 @@ The trunk endpoints define the **start and end caps** used by the harmonic and g
 planners. The inscribed radius along the trunk feeds the complexity metrics.
 
 > The MAT is *equidistant* from the boundary. It bisects its perpendicular chord only where
-> the two walls are locally parallel. An earlier attempt to solve the exact chord-bisection
-> equations numerically did not converge reliably on general shapes, so that approach was
-> dropped.
+> the two walls are locally parallel. Solving for an exact chord-bisecting trajectory was
+> attempted three ways: spline collocation, boundary-pair continuation, and ODE shooting.
+> The report shows why such a trajectory exists only for convex or near-convex fields,
+> which is why the sweep is relaxed to arrival-time fields.
 
 ### 2. Sweep planners
 
@@ -159,12 +177,19 @@ test suite asserts. Altitude is in canvas units. Scale it by the real field size
 
 ### Typical results (12 drones)
 
-| Shape | Best balance | Lowest max altitude | Notes |
-| --- | --- | --- | --- |
-| Ellipse | All similar | All about 21 | Every method agrees on simple convex fields |
-| Star | Lawnmower / geodesic (0.8) | Harmonic (31) | MAT chord folds about 23%; MAT altitude about 140 |
-| Narrow neck | Lawnmower / geodesic (0.85) | Harmonic (21) | Geodesic altitude spikes at the neck (about 159) |
-| C-bend | Lawnmower / geodesic | Harmonic (15) | Harmonic follows the bend; lawnmower splits |
+Maximum altitude for 100% nadir coverage (HFOV 70?, VFOV 55?, 10% overlap; canvas units, lower is better):
+
+| Field | MAT + chord | Lawnmower | Harmonic | Geodesic |
+| --- | ---: | ---: | ---: | ---: |
+| Ellipse | 21.4 | **21.3** | **21.3** | 24.0 |
+| Star | 140.7 | 58.4 | **31.0** | 77.0 |
+| C-bend | 31.8 | 55.9 | **15.0** | 23.8 |
+| Narrow neck | 93.5 | 84.1 | **21.1** | 159.2 |
+| Blob | 27.9 | 28.1 | **24.9** | 79.1 |
+
+Area balance (smallest / largest drone area): lawnmower 0.73?0.87, geodesic 0.73?0.86,
+harmonic 0.32?0.79, MAT 0.12?0.94. MAT chords fold on 23?52% of steps in non-convex fields.
+Regenerate with `py paper/results.py`.
 
 Rule of thumb: **harmonic** gives the lowest altitudes and no splits on bent or necked
 fields, at the cost of uneven drone speeds. **Geodesic** and **lawnmower** give balanced
@@ -181,6 +206,10 @@ py -m pip install -r requirements.txt
 py server.py              # http://127.0.0.1:8765  (MAT lab)
                           # http://127.0.0.1:8765/compare  (planner comparison)
 py -m unittest test_medial -v
+cd ..
+py paper/verify_derivations.py   # equation checks
+py paper/figures.py              # report figures
+py paper/results.py              # result tables
 ```
 
 The server streams NDJSON progress events, and both pages show a live progress bar.
