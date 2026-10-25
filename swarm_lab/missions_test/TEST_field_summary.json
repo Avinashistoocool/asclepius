@@ -1,0 +1,36 @@
+{
+  "field": "field",
+  "areaHa": 0.294,
+  "planner": "harmonic",
+  "drones": 4,
+  "camera": {
+    "hfovDeg": 147.0,
+    "vfovDeg": 62.22,
+    "sideOverlap": 0.1,
+    "frontOverlap": 0.3
+  },
+  "metresPerCanvasUnit": 0.128,
+  "requiredMaxAltM": 4.3,
+  "altitudeCapM": 30.0,
+  "nadirCoveragePct": 100.0,
+  "capped": false,
+  "estimatedMissionS": 34.0,
+  "minSeparationM": null,
+  "test": true,
+  "onlyPath": 2,
+  "ownAreaCoveragePct": 100.0,
+  "missions": [
+    {
+      "file": "TEST_field_path02of04.waypoints",
+      "items": 12,
+      "lengthM": 102.0,
+      "maxAltM": 10.0,
+      "minAltM": 10.0,
+      "transits": 0,
+      "photos": 14,
+      "rtlAltM": 15.0,
+      "fenceRadiusM": 90,
+      "fenceAltMaxM": 25
+    }
+  ]
+}

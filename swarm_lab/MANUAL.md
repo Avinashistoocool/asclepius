@@ -111,6 +111,11 @@ Path 2: own area 0.99 ha (25% of the field); imaged by this drone alone: 100.0%
 ```
 
 - `--drones 4` sets how many paths the field is split into. `--only 2` picks which one to fly.
+- **Which path is which?** Paths are numbered across the drone line, from one edge of the
+  field (path 1) to the opposite edge (path K). Path 1 hugs one side wall, path K the other,
+  and the middle paths run through the centre. Use `--only middle` to pick the centre
+  path. For an even K, that is the one just left of centre, e.g. path 2 of 4. The
+  `*_plan.kml` preview shows the chosen path and its yellow area.
 - Output: a single `TEST_field_path02of04.waypoints` and its `.param` file. The
   `*_plan.kml` preview shows that path and its own area (yellow).
 - The tool checks that the drone images **100% of its own area**, and warns if it does not.
@@ -270,6 +275,28 @@ seconds of each other: the speeds are synchronised so that the drone line stays 
    - Otherwise, arm in **LOITER**, switch to **AUTO**, and raise the throttle briefly to start.
 3. Watch it: it takes off, flies its path, and the photo count rises.
 
+### Height failsafe: `--RTLheight`
+
+Add `--RTLheight M` to any command to set a hard ceiling. **If a drone climbs above M
+metres over home, for any reason (GPS or baro error, a bad command, a flyaway), it
+immediately returns home (RTL).**
+
+```powershell
+py ardupilot_export.py field.kml --drones 4 --only middle --test --home 77.1930 28.5466 --RTLheight 25 --connect COM5,57600
+```
+
+- This sets `FENCE_ALT_MAX = M`, `FENCE_ACTION = 1` (RTL), `FENCE_TYPE = 3` (altitude
+  ceiling + circle around home) and `FENCE_ENABLE = 1`.
+- Survey altitudes are kept below M, and each drone's `RTL_ALT` is placed between the
+  survey and M, so the return leg does not breach the ceiling again.
+- The same fence also triggers RTL if the drone goes more than `FENCE_RADIUS` from home
+  (the farthest waypoint + 30 m).
+- With `--connect`, these parameters are **written to the drone and confirmed** after the
+  mission upload. Use `--no-params` to upload the mission only. The values are also saved
+  in the `.param` file.
+- ArduPilot only enforces the fence while it is armed with a valid home. Check
+  **Fence** on the HUD or in Messages before take-off.
+
 **If anything looks wrong, switch to LOITER** (it stops in place) or **RTL** on the RC.
 You can resume a mission with AUTO.
 
@@ -291,7 +318,7 @@ RTL also happens **automatically** if:
 | Event | Trigger |
 | --- | --- |
 | Mission finished | Last mission item |
-| Geofence breached | `FENCE_ACTION = 1` |
+| Geofence breached: above `--RTLheight` / `FENCE_ALT_MAX`, or beyond `FENCE_RADIUS` | `FENCE_ACTION = 1` |
 | RC link lost | `FS_THR_ENABLE = 1` |
 | Battery low | `BATT_FS_LOW_ACT = 2` |
 | Telemetry lost (if enabled) | `FS_GCS_ENABLE = 1` |

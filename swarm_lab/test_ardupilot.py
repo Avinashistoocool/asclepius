@@ -1,5 +1,6 @@
 import math
 import os
+import sys
 import tempfile
 import unittest
 
@@ -121,6 +122,49 @@ class ArduPilotExportTests(unittest.TestCase):
         self.assertEqual(items[-1].command, ap.MAV_CMD_NAV_RETURN_TO_LAUNCH)
         with self.assertRaises(SystemExit):
             ap.parse([FIELD, "--drones", "3", "--only", "4"])
+
+    def test_only_middle(self):
+        self.assertEqual(ap.parse([FIELD, "--drones", "5", "--only", "middle"]).only, 3)
+        self.assertEqual(ap.parse([FIELD, "--drones", "4", "--only", "middle"]).only, 2)
+
+    def test_rtl_height_ceiling(self):
+        out = tempfile.mkdtemp()
+        summary = ap.main([FIELD, "--drones", "3", "--home", "77.1929", "28.5466", "--RTLheight", "60", "--out", out])
+        self.assertEqual(summary["rtlHeightM"], 60)
+        for entry in summary["missions"]:
+            self.assertEqual(entry["fenceAltMaxM"], 60)
+            self.assertLess(entry["rtlAltM"], 60 - ap.FENCE_MARGIN)       # return leg stays under the ceiling
+            self.assertGreater(entry["rtlAltM"], entry["maxAltM"])        # and above the survey
+            self.assertLess(entry["maxAltM"], 60 - ap.FENCE_MARGIN)
+            values = dict(line.strip().split(",") for line in
+                          open(os.path.join(out, entry["file"].replace(".waypoints", ".param"))) if line[0] != "#")
+            self.assertEqual(values["FENCE_ALT_MAX"], "60")
+            self.assertEqual(values["FENCE_ACTION"], "1")
+            self.assertEqual(values["FENCE_TYPE"], "3")
+        self.assertEqual(summary["nadirCoveragePct"], 100.0)
+        with self.assertRaises(SystemExit):
+            ap.parse([FIELD, "--drones", "3", "--RTLheight", "20"])
+
+    def test_upload_sets_safety_params(self):
+        import socket
+        import subprocess
+        import time
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        sim = subprocess.Popen([sys.executable, os.path.join(HERE, "examples", "fake_vehicle.py"), str(port)],
+                               stdout=subprocess.PIPE, text=True)
+        try:
+            time.sleep(2)
+            out = tempfile.mkdtemp()
+            ap.main([FIELD, "--test", "--home", "77.1929", "28.5466", "--RTLheight", "25", "--out", out,
+                     "--connect", f"tcp:127.0.0.1:{port}", "--yes"])
+        finally:
+            sim.terminate()
+        log = sim.communicate(timeout=5)[0]
+        self.assertIn("stored", log)
+        self.assertIn("FENCE_ALT_MAX = 25", log)
+        self.assertIn("FENCE_ACTION = 1", log)
 
 
 if __name__ == "__main__":

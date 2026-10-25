@@ -1,4 +1,4 @@
-﻿"""Minimal fake ArduCopter vehicles that speak the MAVLink mission protocol.
+﻿"""Minimal fake ArduCopter vehicles that speak the MAVLink mission and parameter protocols.
 
 Use it to test mission uploads without hardware or SITL. Each vehicle is a TCP server, like ArduPilot SITL (tcp:127.0.0.1:5760):
 
@@ -17,7 +17,7 @@ from pymavlink import mavutil
 def vehicle(port, sysid, stop):
     link = mavutil.mavlink_connection(f"tcpin:127.0.0.1:{port}", source_system=sysid, source_component=1)
     mission_type = mavutil.mavlink.MAV_MISSION_TYPE_MISSION
-    mission, expected, last_beat = {}, 0, 0.
+    mission, expected, last_beat, params = {}, 0, 0., {}
     while not stop.is_set():
         if time.time() - last_beat > .5:
             link.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_QUADROTOR,
@@ -39,6 +39,11 @@ def vehicle(port, sysid, stop):
                 print(f"[vehicle {sysid}] stored {len(mission)} mission items", flush=True)
         elif kind == "MISSION_REQUEST_LIST":
             link.mav.mission_count_send(*gcs, len(mission), mission_type)
+        elif kind == "PARAM_SET":
+            name = message.param_id.rstrip("\x00") if isinstance(message.param_id, str) else message.param_id
+            params[name] = message.param_value
+            link.mav.param_value_send(name.encode(), message.param_value, message.param_type, len(params), 0)
+            print(f"[vehicle {sysid}] {name} = {message.param_value:g}", flush=True)
         elif kind == "MISSION_REQUEST_INT" and message.seq in mission:
             item = mission[message.seq]
             link.mav.mission_item_int_send(*gcs, item.seq, item.frame, item.command, item.current, item.autocontinue,

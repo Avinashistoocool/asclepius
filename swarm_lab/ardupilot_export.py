@@ -375,6 +375,9 @@ def read_waypoints(path):
     return items
 
 
+FENCE_MARGIN = 2
+
+
 def safety_params(missions, home, args):
     """Suggested per-drone ArduCopter parameters for the return leg and a geofence around home.
 
@@ -388,18 +391,32 @@ def safety_params(missions, home, args):
         if m.waypoints is not None and len(m.waypoints):
             reach = max(reach, float(np.max(np.linalg.norm(frame.to_en(m.waypoints[:, :2]), axis=1))))
     radius = max(30., math.ceil((reach + args.fence_margin) / 10) * 10)
+    rtls = [math.ceil(top + args.rtl_margin + m.index * args.alt_stagger) if args.rtl_alt is None
+            else args.rtl_alt + m.index * args.alt_stagger for m in missions]
+    if args.rtl_height is not None:
+        # Return layers must sit between the survey top and the ceiling (minus the fence margin),
+        # or the return itself would breach the ceiling and re-trigger RTL.
+        ceiling = args.rtl_height - FENCE_MARGIN - 1
+        if max(rtls) > ceiling:
+            spacing = min(args.alt_stagger, (ceiling - top) / len(rtls))
+            if spacing < 1:
+                raise SystemExit(f"--RTLheight {args.rtl_height:.0f} m leaves no room for {len(rtls)} return "
+                                 f"layer(s) above the survey (top {top:.0f} m). Raise --RTLheight or lower --max-alt.")
+            rtls = [math.floor(top + spacing * (k + 1)) for k in range(len(rtls))]
+            print(f"note: RTL altitudes set to {', '.join(f'{r:.0f}' for r in rtls)} m "
+                  f"to fit under --RTLheight {args.rtl_height:.0f} m")
     sets = []
-    for m in missions:
-        rtl = math.ceil(top + args.rtl_margin + m.index * args.alt_stagger) if args.rtl_alt is None \
-            else args.rtl_alt + m.index * args.alt_stagger
+    for m, rtl in zip(missions, rtls):
+        fence_alt = args.rtl_height if args.rtl_height is not None else math.ceil(rtl + 10)
         sets.append({
             "RTL_ALT": int(round(rtl * 100)),            # cm
             "RTL_ALT_FINAL": 0,                          # land at home
             "FENCE_ENABLE": 1,
             "FENCE_TYPE": 3,                             # max altitude + circle around home
             "FENCE_ACTION": 1,                           # RTL (or land if RTL is impossible)
-            "FENCE_ALT_MAX": int(math.ceil(rtl + 10)),   # m, above RTL_ALT so RTL never breaches it
+            "FENCE_ALT_MAX": int(math.floor(fence_alt)) if args.rtl_height is not None else int(fence_alt),
             "FENCE_RADIUS": int(radius),                 # m from home
+            "FENCE_MARGIN": FENCE_MARGIN,                # m
         })
     return sets
 
@@ -593,8 +610,8 @@ def min_separation(en_paths, alts_m):
 
 
 # --------------------------------------------------------------------------- MAVLink upload
-def upload(connection, items, timeout=10., verify=True, log=print):
-    """Upload a mission with the MAVLink mission protocol, then read it back and compare."""
+def upload(connection, items, timeout=10., verify=True, log=print, params=None):
+    """Upload a mission with the MAVLink mission protocol, read it back, then set `params` (each confirmed)."""
     from pymavlink import mavutil
 
     link = mavutil.mavlink_connection(connection, source_system=255, source_component=190, autoreconnect=True)
@@ -642,8 +659,31 @@ def upload(connection, items, timeout=10., verify=True, log=print):
                 raise RuntimeError(f"Read-back mismatch at item {seq} on system {system}.")
         link.mav.mission_ack_send(system, component, mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type)
         log(f"  verified read-back on system {system}")
+    if params:
+        for name, value in params.items():
+            for attempt in range(3):
+                link.mav.param_set_send(system, component, name.encode(), float(value),
+                                        mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
+                reply = _wait_param(link, name, timeout / 3)
+                if reply is not None and abs(reply.param_value - float(value)) <= 1e-3 * max(1., abs(value)):
+                    break
+            else:
+                link.close()
+                raise RuntimeError(f"Vehicle {system} did not confirm {name}={value}. Set it in Mission Planner.")
+        log(f"  set {len(params)} safety parameters on system {system} "
+            f"(RTL_ALT {params['RTL_ALT'] / 100:.0f} m, fence {params['FENCE_ALT_MAX']} m high / "
+            f"{params['FENCE_RADIUS']} m radius, breach -> RTL)")
     link.close()
     return system
+
+
+def _wait_param(link, name, timeout):
+    end = time.time() + timeout
+    while time.time() < end:
+        message = link.recv_match(type="PARAM_VALUE", blocking=True, timeout=max(end - time.time(), .05))
+        if message is not None and str(message.param_id).rstrip("\x00") == name:
+            return message
+    return None
 
 
 # --------------------------------------------------------------------------- CLI
@@ -687,6 +727,11 @@ def parse(argv=None):
     p.add_argument("--rtl-alt", type=float, default=None,
                    help="RTL altitude for drone 1 in metres (others add --alt-stagger). "
                         "Default: highest survey altitude + --rtl-margin")
+    p.add_argument("--RTLheight", "--rtl-height", dest="rtl_height", type=float, default=None, metavar="M",
+                   help="Failsafe ceiling: a drone that climbs above M metres over home returns home (RTL). "
+                        "Sets FENCE_ALT_MAX=M with FENCE_ACTION=RTL; survey and RTL altitudes are kept below M")
+    p.add_argument("--no-params", dest="push_params", action="store_false",
+                   help="With --connect, upload only the mission, not the RTL/fence safety parameters")
     p.add_argument("--rtl-margin", type=float, default=5., help="Metres above the highest survey altitude for RTL")
     p.add_argument("--fence-margin", type=float, default=30., help="Metres added to the farthest waypoint for the fence")
     p.add_argument("--out", default=None, help="Output folder (default missions; test missions_test)")
@@ -700,9 +745,10 @@ def parse(argv=None):
                            "--home (or the centroid), files prefixed TEST_, confirmation before upload")
     test.add_argument("--test-size", type=float, default=80., help="Side of the test square in metres (default 80)")
     test.add_argument("--yes", action="store_true", help="Skip the upload confirmation prompt")
-    test.add_argument("--only", type=int, metavar="N",
-                      help="Plan --drones paths but export/upload only path N, to be flown by ONE drone "
-                           "(no altitude stagger, own speed). Open *_plan.kml to see which path is which")
+    test.add_argument("--only", type=lambda v: v if v == "middle" else int(v), metavar="N",
+                      help="Plan --drones paths but export/upload only path N (or 'middle'), flown by ONE drone "
+                           "(no altitude stagger, own speed). Paths are numbered across the drone line from one "
+                           "edge to the other. Open *_plan.kml to see which is which")
     args = p.parse_args(argv)
     for key, value in (TEST_DEFAULTS if args.test else NORMAL_DEFAULTS).items():
         if getattr(args, key) is None:
@@ -710,6 +756,8 @@ def parse(argv=None):
     if args.kml is None:
         if not (args.test and args.home):
             p.error("give a field file (.kml/.kmz/.poly), or use --test --home LON LAT for a test square")
+    if args.only == "middle":
+        args.only = (args.drones + 1) // 2
     if args.only is not None:
         if args.test and args.drones == TEST_DEFAULTS["drones"] and "--drones" not in (argv or sys.argv):
             p.error("--only needs --drones K: the number of paths to split the field into (e.g. --drones 4 --only 2)")
@@ -726,6 +774,18 @@ def parse(argv=None):
         p.error("--front-overlap must be in [0, 0.95)")
     if args.min_alt > args.max_alt:
         p.error("--min-alt cannot exceed --max-alt")
+    if args.rtl_height is not None:
+        flying = 1 if args.only else args.drones
+        need = args.min_alt + FENCE_MARGIN + 1 + 2 * flying + (flying - 1) * (0 if args.only else args.alt_stagger)
+        if args.rtl_height < need:
+            p.error(f"--RTLheight must be at least {need:.0f} m for {flying} drone(s) "
+                    f"(survey floor, altitude stagger, and room for RTL layers below the ceiling)")
+        # Leave room above the survey for one return layer per drone (>= 2 m apart) below the ceiling.
+        limit = args.rtl_height - FENCE_MARGIN - 1 - 2 * flying
+        if args.max_alt > limit:
+            print(f"note: --max-alt lowered from {args.max_alt:.0f} m to {limit:.0f} m to stay under "
+                  f"--RTLheight {args.rtl_height:.0f} m", file=sys.stderr)
+            args.max_alt = limit
     if args.rtl_alt is not None and args.rtl_alt < args.max_alt:
         print(f"warning: --rtl-alt {args.rtl_alt:.0f} m is below --max-alt {args.max_alt:.0f} m; "
               "drones may descend into the survey layer on the way home.", file=sys.stderr)
@@ -782,7 +842,7 @@ def main(argv=None):
         "nadirCoveragePct": round(100 * result["coverage"], 2), "capped": result["capped"],
         "estimatedMissionS": round(result["seconds"], 1),
         "minSeparationM": round(separation, 1) if math.isfinite(separation) else None, "test": args.test,
-        "onlyPath": args.only,
+        "onlyPath": args.only, "rtlHeightM": args.rtl_height,
         "ownAreaCoveragePct": None if result["lane_coverage"] is None else round(100 * result["lane_coverage"], 2),
         "missions": [{"file": os.path.basename(f), "items": len(m.items), "lengthM": round(m.length_m, 1),
                       "maxAltM": round(m.max_alt, 1), "minAltM": round(m.min_alt, 1), "transits": m.transits,
@@ -808,6 +868,9 @@ def main(argv=None):
         print(f"  {entry['file']}: {entry['items']} items, {entry['lengthM']:.0f} m, "
               f"alt {entry['minAltM']:.0f}-{entry['maxAltM']:.0f} m, ~{entry['photos']} photos, "
               f"RTL at {entry['rtlAltM']:.0f} m, fence {entry['fenceRadiusM']} m / {entry['fenceAltMaxM']} m")
+    print(f"Failsafe: above {summary['missions'][0]['fenceAltMaxM']} m"
+          f"{'' if args.rtl_height is None else ' (--RTLheight)'} or beyond {summary['missions'][0]['fenceRadiusM']} m "
+          f"from home -> RTL to home")
     if max(e["fenceAltMaxM"] for e in summary["missions"]) > 120:
         print("warning: a fence/RTL altitude exceeds 120 m AGL; check your local altitude limit.")
     print(f"Wrote {len(files)} missions, {len(files)} .param files, a KML preview and a summary to "
@@ -816,8 +879,9 @@ def main(argv=None):
         if len(args.connect) != len(missions):
             raise SystemExit(f"--connect lists {len(args.connect)} links but the plan has {len(missions)} drones.")
         if args.test and not args.yes:
-            print("\nTEST UPLOAD CHECKLIST: props clear, RC pilot ready, geofence set, RTL_ALT above "
-                  f"{max(m.max_alt for m in missions):.0f} m, preview checked in {stem}_plan.kml")
+            what = "mission + RTL/fence parameters" if args.push_params else "mission only"
+            print(f"\nTEST UPLOAD ({what}). CHECKLIST: props clear, RC pilot ready, RTL switch on the RC, "
+                  f"preview checked in {stem}_plan.kml")
             try:
                 answer = input(f"Upload {len(missions)} test mission(s)? [y/N] ").strip().lower()
             except EOFError:
@@ -825,9 +889,9 @@ def main(argv=None):
             if answer not in ("y", "yes"):
                 print("Upload cancelled. Mission files were still written.")
                 return summary
-        for url, m in zip(args.connect, missions):
+        for url, m, values in zip(args.connect, missions, params):
             print(f"Uploading drone {m.index + 1} ...")
-            upload(url, m.items, timeout=args.timeout)
+            upload(url, m.items, timeout=args.timeout, params=values if args.push_params else None)
     return summary
 
 

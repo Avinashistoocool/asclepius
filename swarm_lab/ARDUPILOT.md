@@ -133,6 +133,9 @@ Output in `missions/`:
 | `--no-sync` | | Every drone flies at `--speed`. Missions are shorter, but the formation line is not kept |
 | `--accept-radius` | 2 m | `WPNAV` acceptance radius per waypoint |
 | `--home LON LAT` | centroid | Launch point: item 0, fence centre, test square |
+| `--RTLheight M` | off | **Height failsafe:** sets `FENCE_ALT_MAX=M` with action RTL, so a drone above M m returns home. Survey and RTL altitudes are kept below M. Pushed to the drone with `--connect` |
+| `--only N` / `--only middle` | | Fly only path N of a `--drones K` plan, with one drone. Paths are numbered from one edge of the drone line to the other |
+| `--no-params` | | With `--connect`, upload the mission without the RTL/fence parameters |
 | `--rtl-alt` | survey max + `--rtl-margin` | RTL altitude for drone 1. Each further drone adds `--alt-stagger` |
 | `--rtl-margin`, `--fence-margin` | 5 m, 30 m | Extra height above the survey for RTL; extra distance beyond the farthest waypoint for the fence |
 
@@ -151,7 +154,9 @@ py ardupilot_export.py field.kml --drones 3 --connect tcp:127.0.0.1:5760 tcp:127
 py ardupilot_export.py field.kml --drones 2 --connect udpin:0.0.0.0:14550 udpin:0.0.0.0:14551
 ```
 
-Each mission is sent with the MAVLink mission protocol (`MISSION_COUNT` →
+Each drone's RTL and geofence parameters (`RTL_ALT`, `FENCE_*`, including `--RTLheight`)
+are then written with `PARAM_SET`, and each value is confirmed by the drone. Each mission
+is sent with the MAVLink mission protocol (`MISSION_COUNT` →
 `MISSION_REQUEST_INT` → `MISSION_ITEM_INT` → `MISSION_ACK`), then **read back and compared
 item by item**. Give each drone a unique `SYSID_THISMAV` so that Mission Planner can show
 all of them together.
