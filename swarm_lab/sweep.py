@@ -346,8 +346,8 @@ def lane_image(lanes, step=2):
 def compare(points, drones=12, size=200, prune=.05, hfov=70., vfov=55., overlap=.1,
             progress=lambda f, m: None):
     started = time.perf_counter()
-    if isinstance(drones, bool) or not isinstance(drones, int) or not 2 <= drones <= 64:
-        raise ValueError("Drone count must be an integer from 2 to 64.")
+    if isinstance(drones, bool) or not isinstance(drones, int) or not 1 <= drones <= 64:
+        raise ValueError("Drone count must be an integer from 1 to 64.")
     for name, value, low, high in (("Horizontal FOV", hfov, 10, 150), ("Vertical FOV", vfov, 10, 150),
                                    ("Overlap", overlap, 0, 1)):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:

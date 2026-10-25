@@ -20,6 +20,10 @@ Example
         --max-alt 120 --out missions
     py ardupilot_export.py field.kml --drones 3 --connect udp:127.0.0.1:14550 \
         udp:127.0.0.1:14560 udp:127.0.0.1:14570
+
+Test mode (one or two drones, small area, low and slow):
+    py ardupilot_export.py --test --home 77.1930 28.5466             # 80 m square at home
+    py ardupilot_export.py field.kml --test --drones 2 --connect sitl  # clip field to 80 m around centroid
 """
 
 from __future__ import annotations
@@ -167,6 +171,25 @@ class CanvasMap:
 
     def to_metres(self, xy):
         return (np.asarray(xy) - self.offset) * self.scale + self.origin
+
+
+def clip_to_square(ring_en, centre, half):
+    """Sutherland-Hodgman clip of a polygon (east/north metres) to an axis-aligned square."""
+    out = [tuple(p) for p in ring_en]
+    for axis, sign in ((0, 1), (0, -1), (1, 1), (1, -1)):
+        limit = centre[axis] + sign * half
+        inside = lambda q: sign * (q[axis] - limit) <= 0
+        src, out = out, []
+        for k, current in enumerate(src):
+            previous = src[k - 1]
+            if inside(current) != inside(previous):
+                t = (limit - previous[axis]) / (current[axis] - previous[axis])
+                out.append(tuple(previous[j] + t * (current[j] - previous[j]) for j in range(2)))
+            if inside(current):
+                out.append(current)
+        if not out:
+            break
+    return np.asarray(out, dtype=float).reshape(-1, 2)
 
 
 def simplify_ring(points, limit=300):
@@ -386,11 +409,31 @@ def coverage_at(polygon_canvas, paths, headings_deg, altitudes, hfov, vfov, size
 
 
 def plan(args, log=print):
-    title, ring = read_kml(args.kml, args.placemark)
-    ring = np.asarray(ring)
+    if args.kml:
+        title, ring = read_kml(args.kml, args.placemark)
+        ring = np.asarray(ring)
+    else:
+        # Test mode without a field file: a square of --test-size metres centred on home.
+        lon, lat = args.home
+        f0 = LocalFrame(lat, lon)
+        half = args.test_size / 2
+        title, ring = "Test square", f0.to_lonlat(np.array([[-half, -half], [half, -half], [half, half], [-half, half]]))
     centre = ring.mean(axis=0)
     frame = LocalFrame(float(centre[1]), float(centre[0]))
     en = frame.to_en(ring)
+    if args.test and args.kml and args.test_size:
+        anchor = frame.to_en(np.array([args.home]))[0] if args.home else en.mean(axis=0)
+        clipped = clip_to_square(en, anchor, args.test_size / 2)
+        if len(clipped) < 3 or abs(np.sum(clipped[:, 0] * np.roll(clipped[:, 1], -1)
+                                          - np.roll(clipped[:, 0], -1) * clipped[:, 1])) / 2 < 100:
+            raise SystemExit(f"Test area: the {args.test_size:.0f} m square around "
+                             f"{'--home' if args.home else 'the field centroid'} does not overlap the field.")
+        log(f"TEST: clipping the field to a {args.test_size:.0f} m square around "
+            f"{'home' if args.home else 'the field centroid'}")
+        ring = frame.to_lonlat(clipped)
+        centre = ring.mean(axis=0)
+        frame = LocalFrame(float(centre[1]), float(centre[0]))
+        en = frame.to_en(ring)
     canvas = CanvasMap.fit(en)
     polygon = simplify_ring(canvas.to_canvas(en))
     polygon = validate_polygon(polygon)
@@ -398,7 +441,7 @@ def plan(args, log=print):
     if args.jump_m is None:
         # The planner's transit threshold is in canvas units.
         args.jump_m = JUMP * canvas.scale
-    log(f"Field '{title or os.path.basename(args.kml)}': {len(ring)} vertices, {area_m2 / 1e4:.2f} ha, "
+    log(f"Field '{title or os.path.basename(args.kml or 'test')}': {len(ring)} vertices, {area_m2 / 1e4:.2f} ha, "
         f"{canvas.scale:.3f} m per canvas unit")
 
     drones = args.drones
@@ -422,9 +465,13 @@ def plan(args, log=print):
     alts_m = [np.minimum(a + i * args.alt_stagger, args.max_alt) for i, a in enumerate(alts_m)]
     capped = any(np.any(a * canvas.scale > args.max_alt) for a in alts_canvas)
     coverage = coverage_at(polygon, paths, heads, [a / canvas.scale for a in alts_m], args.hfov, args.vfov, args.grid)
-    if capped:
+    if capped and coverage < 1:
+        hint = "use 2 drones or a smaller --test-size" if args.test else "use more drones or --auto-drones"
         log(f"warning: the plan needs up to {needed:.0f} m but --max-alt is {args.max_alt:.0f} m. "
-            f"Coverage at capped altitudes: {100 * coverage:.1f}%. Use more drones or --auto-drones.")
+            f"Coverage at capped altitudes: {100 * coverage:.1f}%; {hint}.")
+    elif capped:
+        log(f"note: altitudes capped at {args.max_alt:.0f} m (planned up to {needed:.0f} m); "
+            f"coverage re-checked at the capped altitudes is still 100%.")
 
     # Frame timing for synchronised speeds: every drone reaches front k at the same moment.
     en_paths = [canvas.to_metres(p) for p in paths]
@@ -514,22 +561,32 @@ def upload(connection, items, timeout=10., verify=True, log=print):
 
 
 # --------------------------------------------------------------------------- CLI
+NORMAL_DEFAULTS = {"drones": 4, "max_alt": 120., "min_alt": 15., "speed": 8., "alt_stagger": 5., "min_sep": 5.,
+                   "out": "missions"}
+# Conservative settings for first flights: one drone, low, slow, small area, wide vertical separation.
+TEST_DEFAULTS = {"drones": 1, "max_alt": 30., "min_alt": 10., "speed": 3., "alt_stagger": 8., "min_sep": 8.,
+                 "out": "missions_test"}
+SITL_PORTS = (5760, 5770, 5780, 5790)
+
+
 def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("kml", help="Field boundary: .kml/.kmz (largest polygon's outer ring) or Mission Planner .poly")
+    p.add_argument("kml", nargs="?", help="Field boundary: .kml/.kmz (largest polygon's outer ring) or Mission "
+                   "Planner .poly. Optional with --test --home (an 80 m square at home is used)")
     p.add_argument("--placemark", help="Use the polygon placemark with this exact name")
-    p.add_argument("--drones", type=int, default=4, help="Number of drones (2-64)")
+    p.add_argument("--drones", type=int, default=None, help="Number of drones (1-64; default 4, or 1 with --test)")
     p.add_argument("--planner", default="harmonic", choices=["harmonic", "lawnmower", "geodesic", "mat"])
     p.add_argument("--hfov", type=float, default=147., help="Camera across-track field of view, degrees")
     p.add_argument("--vfov", type=float, default=62.22, help="Camera along-track field of view, degrees")
     p.add_argument("--overlap", type=float, default=.1, help="Side overlap margin on altitude (0-1)")
     p.add_argument("--front-overlap", type=float, default=.3, help="Forward overlap between photos (0-0.95)")
-    p.add_argument("--max-alt", type=float, default=120., help="Altitude cap, metres above home")
-    p.add_argument("--min-alt", type=float, default=15., help="Altitude floor, metres above home")
-    p.add_argument("--alt-stagger", type=float, default=5., help="Extra altitude per drone index (m) for separation")
-    p.add_argument("--min-sep", type=float, default=5., help="Warn if two drones come closer than this (m, 3D)")
+    p.add_argument("--max-alt", type=float, default=None, help="Altitude cap, m above home (default 120; test 30)")
+    p.add_argument("--min-alt", type=float, default=None, help="Altitude floor, m above home (default 15; test 10)")
+    p.add_argument("--alt-stagger", type=float, default=None,
+                   help="Extra altitude per drone index, m, for separation (default 5; test 8)")
+    p.add_argument("--min-sep", type=float, default=None, help="Warn below this 3D spacing, m (default 5; test 8)")
     p.add_argument("--auto-drones", action="store_true", help="Add drones until the plan fits under --max-alt")
-    p.add_argument("--speed", type=float, default=8., help="Max ground speed, m/s")
+    p.add_argument("--speed", type=float, default=None, help="Max ground speed, m/s (default 8; test 3)")
     p.add_argument("--min-speed", type=float, default=1.5, help="Min commanded ground speed, m/s")
     p.add_argument("--no-sync", dest="sync", action="store_false",
                    help="Fly every drone at --speed instead of keeping the formation line in sync")
@@ -540,17 +597,36 @@ def parse(argv=None):
                    help="Gap treated as a transit (camera off). Default: the planner's jump threshold")
     p.add_argument("--grid", type=int, default=200, help="Planner grid resolution (coverage is verified on it)")
     p.add_argument("--home", type=float, nargs=2, metavar=("LON", "LAT"), help="Home for item 0 (default: centroid)")
-    p.add_argument("--out", default="missions", help="Output folder")
+    p.add_argument("--out", default=None, help="Output folder (default missions; test missions_test)")
     p.add_argument("--connect", nargs="+", metavar="URL",
-                   help="MAVLink connection per drone, in drone order (e.g. udp:127.0.0.1:14550 COM5,57600)")
+                   help="MAVLink connection per drone, in drone order (e.g. tcp:127.0.0.1:5760 COM5,57600). "
+                        "'sitl' expands to tcp:127.0.0.1:5760, :5770, ... for each drone")
     p.add_argument("--timeout", type=float, default=10.)
+    test = p.add_argument_group("test mode")
+    test.add_argument("--test", action="store_true",
+                      help="First-flight mode: 1-2 drones, 30 m cap, 3 m/s, field clipped to --test-size around "
+                           "--home (or the centroid), files prefixed TEST_, confirmation before upload")
+    test.add_argument("--test-size", type=float, default=80., help="Side of the test square in metres (default 80)")
+    test.add_argument("--yes", action="store_true", help="Skip the upload confirmation prompt")
     args = p.parse_args(argv)
-    if not 2 <= args.drones <= 64:
-        p.error("--drones must be between 2 and 64")
+    for key, value in (TEST_DEFAULTS if args.test else NORMAL_DEFAULTS).items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
+    if args.kml is None:
+        if not (args.test and args.home):
+            p.error("give a field file (.kml/.kmz/.poly), or use --test --home LON LAT for a test square")
+    if args.test and not 1 <= args.drones <= 2:
+        p.error("--test supports 1 or 2 drones; drop --test for a full swarm")
+    if args.test and args.test_size < 20:
+        p.error("--test-size must be at least 20 m")
+    if not 1 <= args.drones <= 64:
+        p.error("--drones must be between 1 and 64")
     if not 0 <= args.front_overlap < .95:
         p.error("--front-overlap must be in [0, 0.95)")
     if args.min_alt > args.max_alt:
         p.error("--min-alt cannot exceed --max-alt")
+    if args.connect == ["sitl"]:
+        args.connect = [f"tcp:127.0.0.1:{5760 + 10 * i}" for i in range(args.drones)]
     return args
 
 
@@ -559,7 +635,11 @@ def main(argv=None):
     result = plan(args, log=print)
     missions = result["missions"]
     os.makedirs(args.out, exist_ok=True)
-    stem = os.path.splitext(os.path.basename(args.kml))[0]
+    stem = os.path.splitext(os.path.basename(args.kml))[0] if args.kml else "square"
+    if args.test:
+        stem = "TEST_" + stem
+        print(f"TEST MODE: {args.drones} drone(s), altitude {args.min_alt:.0f}-{args.max_alt:.0f} m, "
+              f"speed <= {args.speed:.0f} m/s, area <= {args.test_size:.0f} m square")
     files = []
     for m in missions:
         path = os.path.join(args.out, f"{stem}_drone{m.index + 1:02d}.waypoints")
@@ -574,7 +654,8 @@ def main(argv=None):
         "metresPerCanvasUnit": round(result["canvas"].scale, 4),
         "requiredMaxAltM": round(result["needed_alt"], 1), "altitudeCapM": args.max_alt,
         "nadirCoveragePct": round(100 * result["coverage"], 2), "capped": result["capped"],
-        "estimatedMissionS": round(result["seconds"], 1), "minSeparationM": round(separation, 1),
+        "estimatedMissionS": round(result["seconds"], 1),
+        "minSeparationM": round(separation, 1) if math.isfinite(separation) else None, "test": args.test,
         "missions": [{"file": os.path.basename(f), "items": len(m.items), "lengthM": round(m.length_m, 1),
                       "maxAltM": round(m.max_alt, 1), "minAltM": round(m.min_alt, 1), "transits": m.transits,
                       "photos": m.photos} for f, m in zip(files, missions)],
@@ -583,8 +664,8 @@ def main(argv=None):
         json.dump(summary, handle, indent=2)
     print(f"\nNadir coverage at flown altitudes: {summary['nadirCoveragePct']}%  "
           f"(max altitude {max(m.max_alt for m in missions):.1f} m, cap {args.max_alt:.0f} m)")
-    print(f"Estimated synchronised mission time: {summary['estimatedMissionS'] / 60:.1f} min; "
-          f"closest 3D approach between drones: {separation:.1f} m")
+    spacing = f"closest 3D approach between drones: {separation:.1f} m" if math.isfinite(separation) else "single drone"
+    print(f"Estimated synchronised mission time: {summary['estimatedMissionS'] / 60:.1f} min; {spacing}")
     if separation < args.min_sep:
         print("warning: drones pass close to each other; increase --alt-stagger or stagger launch times.")
     for entry in summary["missions"]:
@@ -594,6 +675,16 @@ def main(argv=None):
     if args.connect:
         if len(args.connect) != len(missions):
             raise SystemExit(f"--connect lists {len(args.connect)} links but the plan has {len(missions)} drones.")
+        if args.test and not args.yes:
+            print("\nTEST UPLOAD CHECKLIST: props clear, RC pilot ready, geofence set, RTL_ALT above "
+                  f"{max(m.max_alt for m in missions):.0f} m, preview checked in {stem}_plan.kml")
+            try:
+                answer = input(f"Upload {len(missions)} test mission(s)? [y/N] ").strip().lower()
+            except EOFError:
+                answer = ""
+            if answer not in ("y", "yes"):
+                print("Upload cancelled. Mission files were still written.")
+                return summary
         for url, m in zip(args.connect, missions):
             print(f"Uploading drone {m.index + 1} ...")
             upload(url, m.items, timeout=args.timeout)

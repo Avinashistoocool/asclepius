@@ -29,6 +29,48 @@ If the file contains several polygons, the largest is used. To choose one by nam
 
 ## 3. Generate missions
 
+### Test mode (start here)
+
+For first flights with one or two drones, add `--test`:
+
+```powershell
+# One drone over an 80 m square centred on where you stand (no field file needed)
+py ardupilot_export.py --test --home 77.1930 28.5466
+
+# One or two drones over the real field, clipped to an 80 m square around its centre
+py ardupilot_export.py field.kml --test
+py ardupilot_export.py field.kml --test --drones 2
+
+# Test in SITL (expands to tcp:127.0.0.1:5760, :5770, ...)
+py ardupilot_export.py field.kml --test --drones 2 --connect sitl
+
+# Real drone over its telemetry radio
+py ardupilot_export.py field.kml --test --connect COM5,57600
+```
+
+`--test` changes the defaults to safe first-flight values. Any of them can still be
+overridden, for example with `--max-alt 40`:
+
+| Setting | Normal | `--test` |
+| --- | --- | --- |
+| Drones | 4 | **1** (only 1 or 2 allowed) |
+| Max / min altitude | 120 / 15 m | **30 / 10 m** |
+| Max speed | 8 m/s | **3 m/s** |
+| Altitude stagger between drones | 5 m | **8 m** |
+| Separation warning | 5 m | **8 m** |
+| Area | whole field | **`--test-size` square (default 80 m)** around `--home`, or the field centre |
+| Output | `missions/` | **`missions_test/`**, files prefixed `TEST_` |
+| Upload | immediate | **checklist and a `y/N` prompt** (skip it with `--yes`) |
+
+Suggested progression:
+
+1. `--test` in SITL.
+2. `--test` with one real drone, with a pilot ready on the RC.
+3. `--test --drones 2`.
+4. A full field without `--test`.
+
+### Full missions
+
 ```powershell
 py ardupilot_export.py field.kml --drones 6 --hfov 147 --vfov 62.22 --max-alt 120 --out missions
 ```
@@ -89,7 +131,7 @@ Give one MAVLink connection per drone, in drone order:
 # Telemetry radios
 py ardupilot_export.py field.kml --drones 3 --connect COM5,57600 COM6,57600 COM7,57600
 
-# SITL (each instance on its own TCP port)
+# SITL (each instance on its own TCP port; or just: --connect sitl)
 py ardupilot_export.py field.kml --drones 3 --connect tcp:127.0.0.1:5760 tcp:127.0.0.1:5770 tcp:127.0.0.1:5780
 
 # Mission Planner MAVLink forwarding / companion computers

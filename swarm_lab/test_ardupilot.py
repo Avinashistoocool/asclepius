@@ -64,6 +64,34 @@ class ArduPilotExportTests(unittest.TestCase):
         alts = [i.alt for i in items if i.command == ap.MAV_CMD_NAV_WAYPOINT and i.alt > 0]
         self.assertLessEqual(max(triggers), 2 * max(alts) * tan_y * (1 - .3) + .1)
 
+    def test_test_mode_single_drone_square_at_home(self):
+        out = tempfile.mkdtemp()
+        summary = ap.main(["--test", "--home", "77.1930", "28.5466", "--out", out])
+        self.assertTrue(summary["test"])
+        self.assertEqual(summary["drones"], 1)
+        self.assertEqual(len(summary["missions"]), 1)
+        self.assertTrue(summary["missions"][0]["file"].startswith("TEST_"))
+        self.assertLessEqual(summary["missions"][0]["maxAltM"], 30 + 1e-6)
+        self.assertLess(summary["areaHa"], .65)
+        self.assertEqual(summary["nadirCoveragePct"], 100.0)
+        items = ap.read_waypoints(os.path.join(out, summary["missions"][0]["file"]))
+        speeds = [i.params[1] for i in items if i.command == ap.MAV_CMD_DO_CHANGE_SPEED]
+        self.assertTrue(speeds and max(speeds) <= 3 + 1e-6)
+
+    def test_test_mode_clips_field_and_limits_drones(self):
+        out = tempfile.mkdtemp()
+        summary = ap.main([FIELD, "--test", "--drones", "2", "--out", out])
+        self.assertEqual(len(summary["missions"]), 2)
+        self.assertLessEqual(summary["areaHa"], .64 + 1e-6)
+        with self.assertRaises(SystemExit):
+            ap.parse([FIELD, "--test", "--drones", "3"])
+        with self.assertRaises(SystemExit):
+            ap.parse(["--test"])
+
+    def test_sitl_shortcut(self):
+        args = ap.parse([FIELD, "--test", "--drones", "2", "--connect", "sitl"])
+        self.assertEqual(args.connect, ["tcp:127.0.0.1:5760", "tcp:127.0.0.1:5770"])
+
 
 if __name__ == "__main__":
     unittest.main()
