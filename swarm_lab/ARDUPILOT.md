@@ -1,5 +1,7 @@
 # Flying the plan with ArduPilot and Mission Planner
 
+> New to this? Start with the step-by-step [MANUAL.md](MANUAL.md). This page is the option reference.
+
 `swarm_lab/ardupilot_export.py` converts a coverage plan into one ArduCopter mission per
 drone. You can load the missions in Mission Planner or upload them directly over MAVLink.
 
@@ -81,6 +83,7 @@ Output in `missions/`:
 | --- | --- |
 | `field_drone01.waypoints` … | One mission per drone (`QGC WPL 110`). Load it in Mission Planner with *Flight Plan → Load WP File* |
 | `field_plan.kml` | Open in Google Earth to check every path in 3D before flying |
+| `field_drone01.param` ? | Suggested `RTL_ALT` (different for each drone), `RTL_ALT_FINAL`, and geofence (`FENCE_*`, action RTL) |
 | `field_summary.json` | Required altitude, coverage at the flown altitudes, mission time, closest approach between drones, and per-drone length and photo count |
 
 ### What each mission contains
@@ -121,7 +124,9 @@ Output in `missions/`:
 | `--speed`, `--min-speed` | 8, 1.5 m/s | Ground-speed limits |
 | `--no-sync` | | Every drone flies at `--speed`. Missions are shorter, but the formation line is not kept |
 | `--accept-radius` | 2 m | `WPNAV` acceptance radius per waypoint |
-| `--home LON LAT` | centroid | Coordinates written into item 0 |
+| `--home LON LAT` | centroid | Launch point: item 0, fence centre, test square |
+| `--rtl-alt` | survey max + `--rtl-margin` | RTL altitude for drone 1. Each further drone adds `--alt-stagger` |
+| `--rtl-margin`, `--fence-margin` | 5 m, 30 m | Extra height above the survey for RTL; extra distance beyond the farthest waypoint for the fence |
 
 ## 4. Upload to the drones (pymavlink)
 

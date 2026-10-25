@@ -6,6 +6,7 @@ fleet management, and onboard person detection.
 | Path | What it is |
 | --- | --- |
 | [`swarm_lab/`](swarm_lab/) | Coverage planner: medial axis, four sweep planners compared side by side, per-drone areas, flight paths, nadir camera plan |
+| [`swarm_lab/MANUAL.md`](swarm_lab/MANUAL.md) | **Field-to-flight manual:** draw the KML, generate missions, set up and upload to each drone, fly, and RTL |
 | [`swarm_lab/ARDUPILOT.md`](swarm_lab/ARDUPILOT.md) | **Fly it:** KML/KMZ/.poly ? per-drone ArduCopter `.waypoints` (takeoff, synced speeds, camera trigger distance, RTL) + optional pymavlink upload with read-back |
 | `Fleet_manager.py` | Fleet/lane assignment, camera parameters, and delivery-drone dispatch |
 | `docs/` | GitHub Pages version of the comparison page. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |

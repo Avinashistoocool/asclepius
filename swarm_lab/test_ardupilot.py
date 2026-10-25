@@ -92,6 +92,22 @@ class ArduPilotExportTests(unittest.TestCase):
         args = ap.parse([FIELD, "--test", "--drones", "2", "--connect", "sitl"])
         self.assertEqual(args.connect, ["tcp:127.0.0.1:5760", "tcp:127.0.0.1:5770"])
 
+    def test_rtl_and_fence_params(self):
+        out = tempfile.mkdtemp()
+        summary = ap.main([FIELD, "--drones", "3", "--home", "77.1929", "28.5466", "--out", out])
+        top = max(m["maxAltM"] for m in summary["missions"])
+        rtls = [m["rtlAltM"] for m in summary["missions"]]
+        self.assertTrue(all(r > top for r in rtls))
+        self.assertEqual(len(set(rtls)), 3)  # distinct return heights per drone
+        for i, entry in enumerate(summary["missions"]):
+            path = os.path.join(out, entry["file"].replace(".waypoints", ".param"))
+            values = dict(line.strip().split(",") for line in open(path) if line[0] != "#")
+            self.assertEqual(int(values["RTL_ALT"]), round(entry["rtlAltM"] * 100))
+            self.assertGreater(int(values["FENCE_ALT_MAX"]), entry["rtlAltM"])
+            self.assertEqual(values["FENCE_ACTION"], "1")
+            items = ap.read_waypoints(os.path.join(out, entry["file"]))
+            self.assertEqual(items[-1].command, ap.MAV_CMD_NAV_RETURN_TO_LAUNCH)
+
 
 if __name__ == "__main__":
     unittest.main()
