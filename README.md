@@ -6,6 +6,7 @@ fleet management, and onboard person detection.
 | Path | What it is |
 | --- | --- |
 | [`swarm_lab/`](swarm_lab/) | Coverage planner: medial axis, four sweep planners compared side by side, per-drone areas, flight paths, nadir camera plan |
+| [`swarm_lab/ARDUPILOT.md`](swarm_lab/ARDUPILOT.md) | **Fly it:** KML/KMZ/.poly ? per-drone ArduCopter `.waypoints` (takeoff, synced speeds, camera trigger distance, RTL) + optional pymavlink upload with read-back |
 | `Fleet_manager.py` | Fleet/lane assignment, camera parameters, and delivery-drone dispatch |
 | `docs/` | GitHub Pages version of the comparison page. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |
 | [`paper/`](paper/) | Technical report ([LaTeX](paper/coverage_theory.tex), [Markdown](paper/coverage_theory.md)): the mathematics, the solvers that failed and why, and the method in use. Includes equation checks (`verify_derivations.py`), figures (`figures.py`) and tables (`results.py`) |
@@ -23,6 +24,7 @@ in your browser.
 | Browser demo (`docs/`) | Live on GitHub Pages, Obsidian & Lime UI, runs in a Web Worker in 0.8?2.3 s |
 | Technical report (`paper/`) | LaTeX + Markdown, 4 figures, 2 result tables, 8/8 equation checks pass |
 | Exact chord-bisecting trajectory | Solved for convex fields and symmetric presets; shown not to exist in general for strongly non-convex fields (see the report) |
+| ArduPilot export | `ardupilot_export.py`: Mission Planner `.waypoints` per drone, KML preview, MAVLink upload verified against simulated vehicles |
 | Fleet manager / YOLO detection | Unchanged in this round |
 
 **Key finding.** The harmonic planner (`?T = 0`) needs the lowest maximum altitude on
@@ -226,5 +228,8 @@ pipeline in the browser with no server.
 | `complexity.py` | Shape complexity descriptors |
 | `boundary.py` / `exact.py` | Polygon validation and intersections; preset shapes |
 | `server.py` | Local HTTP server with streamed progress |
+| `ardupilot_export.py` | KML/KMZ/.poly ? ArduCopter missions and MAVLink upload ([guide](swarm_lab/ARDUPILOT.md)) |
+| `examples/` | Sample field (`field.kml`) and a fake MAVLink vehicle for upload tests |
 | `index.html` / `compare.html` | MAT lab UI / comparison UI |
 | `test_medial.py` | Unit tests (MAT, complexity, lane partition, 100% nadir coverage) |
+| `test_ardupilot.py` | Exporter tests (projection, mission structure, altitude cap, trigger spacing, coverage) |

@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Example field</name>
+    <Placemark>
+      <name>Search area</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>
+        77.19120,28.54480,0 77.19310,28.54445,0 77.19455,28.54520,0 77.19530,28.54650,0
+        77.19470,28.54760,0 77.19390,28.54720,0 77.19330,28.54790,0 77.19210,28.54830,0
+        77.19095,28.54760,0 77.19050,28.54630,0 77.19120,28.54480,0
+      </coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+  </Document>
+</kml>

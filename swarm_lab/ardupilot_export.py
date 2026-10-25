@@ -1,0 +1,604 @@
+"""Export swarm coverage plans as ArduPilot (ArduCopter) missions.
+
+Pipeline
+--------
+1. Read the field polygon from a KML/KMZ file or a Mission Planner .poly file.
+2. Project it to a local east/north plane in metres, then scale it into the
+   planner's 600 x 600 canvas.
+3. Run the planner (sweep.compare) and pick one method (default: harmonic).
+4. Convert every drone's path, heading and altitude back to lat/lon/metres.
+   Apply the altitude limits and re-verify nadir coverage at the final altitudes.
+5. Simplify the paths, add camera-trigger and speed commands, and write one
+   Mission Planner ``.waypoints`` file per drone, plus a KML preview and a JSON
+   summary.
+6. Optionally upload each mission to its vehicle over MAVLink (pymavlink), and
+   read it back to verify.
+
+Example
+-------
+    py ardupilot_export.py field.kml --drones 6 --hfov 147 --vfov 62.22 \
+        --max-alt 120 --out missions
+    py ardupilot_export.py field.kml --drones 3 --connect udp:127.0.0.1:14550 \
+        udp:127.0.0.1:14560 udp:127.0.0.1:14570
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import sys
+import time
+import zipfile
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from boundary import validate_polygon
+from nadir import JUMP, headings, sweep_footprints
+from sweep import Grid, compare
+
+EARTH_RADIUS = 6378137.0
+CANVAS_MARGIN = 40.0
+CANVAS_SPAN = 600.0 - 2 * CANVAS_MARGIN
+
+# MAVLink command and frame ids (common.xml)
+MAV_FRAME_GLOBAL = 0
+MAV_FRAME_MISSION = 2
+MAV_FRAME_GLOBAL_RELATIVE_ALT = 3
+MAV_CMD_NAV_WAYPOINT = 16
+MAV_CMD_NAV_RETURN_TO_LAUNCH = 20
+MAV_CMD_NAV_TAKEOFF = 22
+MAV_CMD_DO_CHANGE_SPEED = 178
+MAV_CMD_DO_SET_CAM_TRIGG_DIST = 206
+
+
+# --------------------------------------------------------------------------- KML input
+def _coordinates(text):
+    points = []
+    for token in text.replace("\n", " ").split():
+        parts = token.split(",")
+        if len(parts) >= 2:
+            points.append((float(parts[0]), float(parts[1])))
+    if len(points) > 1 and points[0] == points[-1]:
+        points.pop()
+    return points
+
+
+def read_poly(path):
+    """Mission Planner polygon file: optional '#' comments, then one 'lat lon' pair per line."""
+    ring = []
+    with open(path) as handle:
+        for line in handle:
+            parts = line.replace(",", " ").split()
+            if len(parts) >= 2 and not line.lstrip().startswith("#"):
+                ring.append((float(parts[1]), float(parts[0])))
+    if len(ring) > 1 and ring[0] == ring[-1]:
+        ring.pop()
+    if len(ring) < 3:
+        raise ValueError("The .poly file needs at least 3 points.")
+    return os.path.splitext(os.path.basename(path))[0], ring
+
+
+def read_kml(path, placemark=None):
+    """Return (name, [(lon, lat), ...]) for the outer ring of a polygon in a KML, KMZ or Mission Planner .poly file."""
+    if path.lower().endswith(".poly"):
+        return read_poly(path)
+    if path.lower().endswith(".kmz"):
+        with zipfile.ZipFile(path) as archive:
+            name = next((n for n in archive.namelist() if n.lower().endswith(".kml")), None)
+            if name is None:
+                raise ValueError("The KMZ file contains no .kml document.")
+            data = archive.read(name)
+    else:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    root = ET.fromstring(data)
+    strip = lambda tag: tag.rsplit("}", 1)[-1]
+    found = []
+    for mark in root.iter():
+        if strip(mark.tag) != "Placemark":
+            continue
+        title = next((c.text or "" for c in mark if strip(c.tag) == "name"), "")
+        for polygon in (e for e in mark.iter() if strip(e.tag) == "Polygon"):
+            outer = next((e for e in polygon.iter() if strip(e.tag) == "outerBoundaryIs"), None)
+            coords = next((e for e in (outer if outer is not None else polygon).iter()
+                           if strip(e.tag) == "coordinates"), None)
+            if coords is not None and coords.text:
+                ring = _coordinates(coords.text)
+                holes = sum(1 for e in polygon.iter() if strip(e.tag) == "innerBoundaryIs")
+                found.append((title.strip(), ring, holes))
+    if placemark is not None:
+        found = [f for f in found if f[0] == placemark]
+    if not found:
+        raise ValueError("No polygon found in the KML" + (f" named '{placemark}'." if placemark else "."))
+    # Use the largest polygon by projected area.
+    def area(ring):
+        xy = np.asarray(ring)
+        return abs(np.sum(xy[:, 0] * np.roll(xy[:, 1], -1) - np.roll(xy[:, 0], -1) * xy[:, 1]))
+    title, ring, holes = max(found, key=lambda f: area(f[1]))
+    if holes:
+        print(f"warning: polygon '{title}' has {holes} hole(s); holes are ignored by the planner.", file=sys.stderr)
+    if len(ring) < 3:
+        raise ValueError("The polygon needs at least 3 vertices.")
+    return title, ring
+
+
+# --------------------------------------------------------------------------- projection
+@dataclass
+class LocalFrame:
+    """Equirectangular east/north projection about a reference point (accurate to ~0.1% over a few km)."""
+
+    lat0: float
+    lon0: float
+
+    def to_en(self, lonlat):
+        lonlat = np.asarray(lonlat, dtype=float)
+        east = np.radians(lonlat[:, 0] - self.lon0) * EARTH_RADIUS * math.cos(math.radians(self.lat0))
+        north = np.radians(lonlat[:, 1] - self.lat0) * EARTH_RADIUS
+        return np.c_[east, north]
+
+    def to_lonlat(self, en):
+        en = np.asarray(en, dtype=float)
+        lat = self.lat0 + np.degrees(en[:, 1] / EARTH_RADIUS)
+        lon = self.lon0 + np.degrees(en[:, 0] / (EARTH_RADIUS * math.cos(math.radians(self.lat0))))
+        return np.c_[lon, lat]
+
+
+@dataclass
+class CanvasMap:
+    """Uniform scale + offset between local metres and planner canvas units."""
+
+    scale: float  # metres per canvas unit
+    origin: np.ndarray  # metres at canvas (CANVAS_MARGIN, CANVAS_MARGIN)
+    offset: np.ndarray  # canvas offset centring the field
+
+    @classmethod
+    def fit(cls, en):
+        low, high = en.min(axis=0), en.max(axis=0)
+        scale = max(float(np.max(high - low)) / CANVAS_SPAN, 1e-6)
+        offset = (CANVAS_SPAN - (high - low) / scale) / 2 + CANVAS_MARGIN
+        return cls(scale, low, offset)
+
+    def to_canvas(self, en):
+        return (np.asarray(en) - self.origin) / self.scale + self.offset
+
+    def to_metres(self, xy):
+        return (np.asarray(xy) - self.offset) * self.scale + self.origin
+
+
+def simplify_ring(points, limit=300):
+    """Douglas-Peucker on a closed ring until it has at most `limit` vertices."""
+    points = np.asarray(points, dtype=float)
+    if len(points) <= limit:
+        return points
+    tolerance = 0.05
+    while True:
+        keep = _rdp(np.vstack((points, points[:1])), tolerance)[:-1]
+        if len(keep) <= limit:
+            return points[keep]
+        tolerance *= 1.6
+
+
+def _rdp(points, tolerance):
+    keep = np.zeros(len(points), dtype=bool)
+    keep[[0, -1]] = True
+    stack = [(0, len(points) - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b <= a + 1:
+            continue
+        start, end = points[a], points[b]
+        segment = end - start
+        length = np.linalg.norm(segment)
+        middle = points[a + 1:b]
+        if length < 1e-12:
+            distance = np.linalg.norm(middle - start, axis=1)
+        else:
+            distance = np.abs(segment[0] * (middle[:, 1] - start[1]) - segment[1] * (middle[:, 0] - start[0])) / length
+        i = int(np.argmax(distance))
+        if distance[i] > tolerance:
+            keep[a + 1 + i] = True
+            stack.extend(((a, a + 1 + i), (a + 1 + i, b)))
+    return np.flatnonzero(keep)
+
+
+# --------------------------------------------------------------------------- mission model
+@dataclass
+class MissionItem:
+    command: int
+    frame: int = MAV_FRAME_GLOBAL_RELATIVE_ALT
+    params: tuple = (0., 0., 0., 0.)
+    lat: float = 0.
+    lon: float = 0.
+    alt: float = 0.
+    current: int = 0
+    autocontinue: int = 1
+
+
+@dataclass
+class DroneMission:
+    index: int
+    items: list = field(default_factory=list)
+    waypoints: np.ndarray = None  # lon, lat, alt (relative) of flown waypoints
+    length_m: float = 0.
+    max_alt: float = 0.
+    min_alt: float = 0.
+    transits: int = 0
+    photos: int = 0
+
+
+def _segments(path, jump):
+    """Split a path into continuous runs separated by transit jumps."""
+    if len(path) == 0:
+        return []
+    breaks = np.flatnonzero(np.linalg.norm(np.diff(path, axis=0), axis=1) > jump) + 1
+    return [r for r in np.split(np.arange(len(path)), breaks) if len(r)]
+
+
+def _simplify_run(en, alt, tolerance, alt_tolerance):
+    """Keep path vertices needed to stay within `tolerance` metres and `alt_tolerance` metres of altitude."""
+    if len(en) <= 2:
+        return np.arange(len(en))
+    scaled = np.c_[en, alt * (tolerance / max(alt_tolerance, 1e-9))]
+    keep = np.zeros(len(en), dtype=bool)
+    keep[[0, -1]] = True
+    stack = [(0, len(en) - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b <= a + 1:
+            continue
+        u = np.linspace(0, 1, b - a + 1)[1:-1, None]
+        chord = scaled[a] + u * (scaled[b] - scaled[a])
+        distance = np.linalg.norm(scaled[a + 1:b] - chord, axis=1)
+        i = int(np.argmax(distance))
+        if distance[i] > tolerance:
+            keep[a + 1 + i] = True
+            stack.extend(((a, a + 1 + i), (a + 1 + i, b)))
+    return np.flatnonzero(keep)
+
+
+def build_mission(index, lonlat, alt, seconds, args, home):
+    """Turn one drone's sampled path into ArduCopter mission items."""
+    frame = LocalFrame(home[1], home[0])
+    en = frame.to_en(lonlat)
+    tan_y = math.tan(math.radians(args.vfov) / 2)
+    mission = DroneMission(index)
+    items = mission.items
+    items.append(MissionItem(MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL, lat=home[1], lon=home[0], alt=0., current=1))
+    runs = _segments(en, args.jump_m)
+    if not runs:
+        return mission
+    items.append(MissionItem(MAV_CMD_NAV_TAKEOFF, params=(0., 0., 0., float("nan")), alt=float(alt[runs[0][0]])))
+    flown, last_speed, last_trigger = [], None, None
+
+    def set_speed(speed):
+        nonlocal last_speed
+        speed = float(np.clip(speed, args.min_speed, args.speed))
+        if last_speed is None or abs(speed - last_speed) > .15 * last_speed:
+            items.append(MissionItem(MAV_CMD_DO_CHANGE_SPEED, MAV_FRAME_MISSION, params=(1., round(speed, 2), -1., 0.)))
+            last_speed = speed
+
+    def set_trigger(distance):
+        nonlocal last_trigger
+        distance = round(float(distance), 1)
+        if last_trigger is None or abs(distance - last_trigger) > max(.1 * last_trigger, .05):
+            items.append(MissionItem(MAV_CMD_DO_SET_CAM_TRIGG_DIST, MAV_FRAME_MISSION, params=(distance, 0., 1., 0.)))
+            last_trigger = distance
+
+    def waypoint(i, altitude):
+        lon, lat = lonlat[i]
+        items.append(MissionItem(MAV_CMD_NAV_WAYPOINT, params=(0., args.accept_radius, 0., float("nan")),
+                                 lat=float(lat), lon=float(lon), alt=round(float(altitude), 2)))
+        flown.append((lon, lat, altitude))
+
+    for r, run in enumerate(runs):
+        keep = _simplify_run(en[run], alt[run], args.path_tolerance, args.alt_tolerance)
+        if r:
+            set_trigger(0.)
+            mission.transits += 1
+        set_speed(args.speed)
+        waypoint(run[keep[0]], alt[run[keep[0]]])
+        for a, b in zip(keep[:-1], keep[1:]):
+            span = run[a:b + 1]
+            # Never fly lower than any dropped sample needed.
+            segment_alt = float(np.max(alt[span]))
+            if len(flown):
+                flown[-1] = (flown[-1][0], flown[-1][1], max(flown[-1][2], segment_alt))
+                items[-1].alt = round(max(items[-1].alt, segment_alt), 2)
+            length = float(np.sum(np.linalg.norm(np.diff(en[span], axis=0), axis=1)))
+            duration = float(np.sum(seconds[span[:-1]])) if args.sync else 0.
+            if args.sync and duration > 0:
+                set_speed(length / duration)
+            footprint_along = 2 * segment_alt * tan_y
+            set_trigger(max(footprint_along * (1 - args.front_overlap), .5))
+            mission.photos += int(length / max(last_trigger, .5)) + 1
+            waypoint(run[b], segment_alt)
+    set_trigger(0.)
+    items.append(MissionItem(MAV_CMD_NAV_RETURN_TO_LAUNCH, MAV_FRAME_MISSION))
+    mission.waypoints = np.asarray(flown)
+    mission.length_m = float(np.sum(np.linalg.norm(np.diff(frame.to_en(mission.waypoints[:, :2]), axis=0), axis=1)))
+    mission.max_alt = float(mission.waypoints[:, 2].max())
+    mission.min_alt = float(mission.waypoints[:, 2].min())
+    return mission
+
+
+def write_waypoints(mission, path):
+    """Mission Planner / QGC 'QGC WPL 110' text format."""
+    with open(path, "w", newline="\n") as handle:
+        handle.write("QGC WPL 110\n")
+        for seq, item in enumerate(mission.items):
+            p = [0. if (isinstance(v, float) and math.isnan(v)) else v for v in item.params]
+            handle.write("\t".join(str(v) for v in (
+                seq, item.current, item.frame, item.command, f"{p[0]:.8f}", f"{p[1]:.8f}", f"{p[2]:.8f}",
+                f"{p[3]:.8f}", f"{item.lat:.8f}", f"{item.lon:.8f}", f"{item.alt:.6f}", item.autocontinue)) + "\n")
+
+
+def read_waypoints(path):
+    items = []
+    with open(path) as handle:
+        if not handle.readline().startswith("QGC WPL"):
+            raise ValueError("Not a QGC WPL waypoint file.")
+        for line in handle:
+            f = line.split("\t")
+            if len(f) == 12:
+                items.append(MissionItem(int(f[3]), int(f[2]), tuple(float(v) for v in f[4:8]),
+                                         float(f[8]), float(f[9]), float(f[10]), int(f[1]), int(f[11])))
+    return items
+
+
+def write_preview_kml(boundary_lonlat, missions, path, title):
+    colours = ["ff00ffcc", "ff3399ff", "ffff66cc", "ff66ff33", "ff3333ff", "ffffcc00", "ffcc66ff", "ff00ccff"]
+    out = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
+           f"<name>{title} swarm plan</name>"]
+    ring = " ".join(f"{lon:.8f},{lat:.8f},0" for lon, lat in list(boundary_lonlat) + [boundary_lonlat[0]])
+    out.append(f'<Placemark><name>Field</name><Style><LineStyle><color>ffffffff</color><width>2</width></LineStyle>'
+               f'<PolyStyle><color>2200ff00</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing>'
+               f'<coordinates>{ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>')
+    for m in missions:
+        if m.waypoints is None or not len(m.waypoints):
+            continue
+        coords = " ".join(f"{lon:.8f},{lat:.8f},{alt:.2f}" for lon, lat, alt in m.waypoints)
+        out.append(f'<Placemark><name>Drone {m.index + 1} (max {m.max_alt:.0f} m)</name><Style><LineStyle>'
+                   f'<color>{colours[m.index % len(colours)]}</color><width>3</width></LineStyle></Style>'
+                   f'<LineString><altitudeMode>relativeToGround</altitudeMode><coordinates>{coords}</coordinates>'
+                   f'</LineString></Placemark>')
+    out.append("</Document></kml>")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(out))
+
+
+# --------------------------------------------------------------------------- planning
+def coverage_at(polygon_canvas, paths, headings_deg, altitudes, hfov, vfov, size):
+    """Fraction of the field imaged with the given (possibly capped) altitudes, in canvas units."""
+    grid = Grid(polygon_canvas, size)
+    hits = np.zeros(grid.mask.shape, dtype=np.int32)
+    tan_x, tan_y = math.tan(math.radians(hfov) / 2), math.tan(math.radians(vfov) / 2)
+    for path, heading, alt in zip(paths, headings_deg, altitudes):
+        if not len(path):
+            continue
+        h = np.radians(heading)
+        sweep_footprints(grid, path, {"heading": np.c_[np.cos(h), np.sin(h)], "altitude": alt}, tan_x, tan_y, hits)
+    field_cells = np.count_nonzero(grid.mask)
+    return np.count_nonzero(grid.mask & (hits > 0)) / max(field_cells, 1)
+
+
+def plan(args, log=print):
+    title, ring = read_kml(args.kml, args.placemark)
+    ring = np.asarray(ring)
+    centre = ring.mean(axis=0)
+    frame = LocalFrame(float(centre[1]), float(centre[0]))
+    en = frame.to_en(ring)
+    canvas = CanvasMap.fit(en)
+    polygon = simplify_ring(canvas.to_canvas(en))
+    polygon = validate_polygon(polygon)
+    area_m2 = abs(np.sum(en[:, 0] * np.roll(en[:, 1], -1) - np.roll(en[:, 0], -1) * en[:, 1])) / 2
+    if args.jump_m is None:
+        # The planner's transit threshold is in canvas units.
+        args.jump_m = JUMP * canvas.scale
+    log(f"Field '{title or os.path.basename(args.kml)}': {len(ring)} vertices, {area_m2 / 1e4:.2f} ha, "
+        f"{canvas.scale:.3f} m per canvas unit")
+
+    drones = args.drones
+    while True:
+        log(f"Planning {drones} drones with the {args.planner} planner ...")
+        result = compare(polygon.tolist(), drones=drones, size=args.grid, hfov=args.hfov, vfov=args.vfov,
+                         overlap=args.overlap)
+        method = result["methods"][args.planner]
+        needed = method["stats"]["maxAltitude"] * canvas.scale
+        if needed <= args.max_alt or not args.auto_drones or drones >= 64:
+            break
+        drones = min(64, max(drones + 1, int(math.ceil(drones * needed / args.max_alt))))
+        log(f"  needs {needed:.0f} m > {args.max_alt:.0f} m; retrying with {drones} drones")
+
+    paths = [np.asarray(d["path"], dtype=float).reshape(-1, 2) for d in method["drones"]]
+    heads = [np.asarray(d["heading"], dtype=float) for d in method["drones"]]
+    alts_canvas = [np.asarray(d["altitude"], dtype=float) for d in method["drones"]]
+    # Each drone gets its own altitude band (+i * stagger) so converging drones stay vertically separated.
+    # Raising altitude only enlarges footprints, so this never reduces coverage.
+    alts_m = [np.clip(a * canvas.scale, args.min_alt, args.max_alt) for a in alts_canvas]
+    alts_m = [np.minimum(a + i * args.alt_stagger, args.max_alt) for i, a in enumerate(alts_m)]
+    capped = any(np.any(a * canvas.scale > args.max_alt) for a in alts_canvas)
+    coverage = coverage_at(polygon, paths, heads, [a / canvas.scale for a in alts_m], args.hfov, args.vfov, args.grid)
+    if capped:
+        log(f"warning: the plan needs up to {needed:.0f} m but --max-alt is {args.max_alt:.0f} m. "
+            f"Coverage at capped altitudes: {100 * coverage:.1f}%. Use more drones or --auto-drones.")
+
+    # Frame timing for synchronised speeds: every drone reaches front k at the same moment.
+    en_paths = [canvas.to_metres(p) for p in paths]
+    steps = [np.r_[np.linalg.norm(np.diff(p, axis=0), axis=1), 0.] if len(p) else np.zeros(0) for p in en_paths]
+    frames = max((len(s) for s in steps), default=0)
+    seconds = np.zeros(frames)
+    for s in steps:
+        usable = np.where(s > args.jump_m, 0., s)
+        seconds[:len(s)] = np.maximum(seconds[:len(s)], usable / args.speed)
+
+    home = (float(centre[0]), float(centre[1])) if args.home is None else tuple(args.home)
+    missions = []
+    for i, (p, a) in enumerate(zip(en_paths, alts_m)):
+        lonlat = frame.to_lonlat(p) if len(p) else np.zeros((0, 2))
+        missions.append(build_mission(i, lonlat, a, seconds[:len(p)], args, home))
+    return {"title": title, "ring": ring, "frame": frame, "canvas": canvas, "result": result, "method": method,
+            "missions": missions, "coverage": coverage, "capped": capped, "needed_alt": needed, "drones": drones,
+            "area_m2": area_m2, "seconds": float(np.sum(seconds)), "home": home,
+            "separation": min_separation(en_paths, alts_m)}
+
+
+def min_separation(en_paths, alts_m):
+    """Smallest 3D distance between any two drones at the same formation frame (the drones fly in sync)."""
+    frames = min((len(p) for p in en_paths if len(p)), default=0)
+    if frames == 0 or len(en_paths) < 2:
+        return float("inf")
+    points = np.stack([np.c_[p[:frames], a[:frames]] for p, a in zip(en_paths, alts_m)])
+    best = float("inf")
+    for i in range(len(points)):
+        for j in range(i + 1, len(points)):
+            best = min(best, float(np.min(np.linalg.norm(points[i] - points[j], axis=1))))
+    return best
+
+
+# --------------------------------------------------------------------------- MAVLink upload
+def upload(connection, items, timeout=10., verify=True, log=print):
+    """Upload a mission with the MAVLink mission protocol, then read it back and compare."""
+    from pymavlink import mavutil
+
+    link = mavutil.mavlink_connection(connection, source_system=255, source_component=190, autoreconnect=True)
+    deadline = time.time() + timeout
+    heartbeat = None
+    while heartbeat is None and time.time() < deadline:
+        link.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
+        heartbeat = link.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
+        if heartbeat is not None and heartbeat.get_srcComponent() == 190:
+            heartbeat = None
+    if heartbeat is None:
+        raise TimeoutError(f"No vehicle heartbeat on {connection}.")
+    system, component = heartbeat.get_srcSystem(), heartbeat.get_srcComponent()
+    mission_type = mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+    link.mav.mission_count_send(system, component, len(items), mission_type)
+    sent = set()
+    while True:
+        message = link.recv_match(type=["MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK"], blocking=True,
+                                  timeout=timeout)
+        if message is None:
+            raise TimeoutError(f"Vehicle {system} stopped requesting mission items ({len(sent)}/{len(items)} sent).")
+        if message.get_type() == "MISSION_ACK":
+            if message.type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                raise RuntimeError(f"Vehicle {system} rejected the mission (MAV_MISSION_RESULT {message.type}).")
+            break
+        seq = message.seq
+        item = items[seq]
+        p = [0. if math.isnan(v) else v for v in item.params] if message.get_type() == "MISSION_REQUEST" else item.params
+        link.mav.mission_item_int_send(system, component, seq, item.frame, item.command, item.current,
+                                       item.autocontinue, *[float(v) for v in p], int(round(item.lat * 1e7)),
+                                       int(round(item.lon * 1e7)), float(item.alt), mission_type)
+        sent.add(seq)
+    log(f"  uploaded {len(items)} items to system {system} on {connection}")
+    if verify:
+        link.mav.mission_request_list_send(system, component, mission_type)
+        count = link.recv_match(type="MISSION_COUNT", blocking=True, timeout=timeout)
+        if count is None or count.count != len(items):
+            raise RuntimeError(f"Read-back count mismatch on system {system}.")
+        for seq in range(1, count.count):  # item 0 is home, which the autopilot rewrites
+            link.mav.mission_request_int_send(system, component, seq, mission_type)
+            got = link.recv_match(type="MISSION_ITEM_INT", blocking=True, timeout=timeout)
+            want = items[seq]
+            if (got is None or got.command != want.command or abs(got.x - round(want.lat * 1e7)) > 1
+                    or abs(got.y - round(want.lon * 1e7)) > 1 or abs(got.z - want.alt) > .01):
+                raise RuntimeError(f"Read-back mismatch at item {seq} on system {system}.")
+        link.mav.mission_ack_send(system, component, mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type)
+        log(f"  verified read-back on system {system}")
+    link.close()
+    return system
+
+
+# --------------------------------------------------------------------------- CLI
+def parse(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("kml", help="Field boundary: .kml/.kmz (largest polygon's outer ring) or Mission Planner .poly")
+    p.add_argument("--placemark", help="Use the polygon placemark with this exact name")
+    p.add_argument("--drones", type=int, default=4, help="Number of drones (2-64)")
+    p.add_argument("--planner", default="harmonic", choices=["harmonic", "lawnmower", "geodesic", "mat"])
+    p.add_argument("--hfov", type=float, default=147., help="Camera across-track field of view, degrees")
+    p.add_argument("--vfov", type=float, default=62.22, help="Camera along-track field of view, degrees")
+    p.add_argument("--overlap", type=float, default=.1, help="Side overlap margin on altitude (0-1)")
+    p.add_argument("--front-overlap", type=float, default=.3, help="Forward overlap between photos (0-0.95)")
+    p.add_argument("--max-alt", type=float, default=120., help="Altitude cap, metres above home")
+    p.add_argument("--min-alt", type=float, default=15., help="Altitude floor, metres above home")
+    p.add_argument("--alt-stagger", type=float, default=5., help="Extra altitude per drone index (m) for separation")
+    p.add_argument("--min-sep", type=float, default=5., help="Warn if two drones come closer than this (m, 3D)")
+    p.add_argument("--auto-drones", action="store_true", help="Add drones until the plan fits under --max-alt")
+    p.add_argument("--speed", type=float, default=8., help="Max ground speed, m/s")
+    p.add_argument("--min-speed", type=float, default=1.5, help="Min commanded ground speed, m/s")
+    p.add_argument("--no-sync", dest="sync", action="store_false",
+                   help="Fly every drone at --speed instead of keeping the formation line in sync")
+    p.add_argument("--accept-radius", type=float, default=2., help="Waypoint acceptance radius, metres")
+    p.add_argument("--path-tolerance", type=float, default=1., help="Path simplification tolerance, metres")
+    p.add_argument("--alt-tolerance", type=float, default=1., help="Altitude simplification tolerance, metres")
+    p.add_argument("--jump-m", type=float, default=None,
+                   help="Gap treated as a transit (camera off). Default: the planner's jump threshold")
+    p.add_argument("--grid", type=int, default=200, help="Planner grid resolution (coverage is verified on it)")
+    p.add_argument("--home", type=float, nargs=2, metavar=("LON", "LAT"), help="Home for item 0 (default: centroid)")
+    p.add_argument("--out", default="missions", help="Output folder")
+    p.add_argument("--connect", nargs="+", metavar="URL",
+                   help="MAVLink connection per drone, in drone order (e.g. udp:127.0.0.1:14550 COM5,57600)")
+    p.add_argument("--timeout", type=float, default=10.)
+    args = p.parse_args(argv)
+    if not 2 <= args.drones <= 64:
+        p.error("--drones must be between 2 and 64")
+    if not 0 <= args.front_overlap < .95:
+        p.error("--front-overlap must be in [0, 0.95)")
+    if args.min_alt > args.max_alt:
+        p.error("--min-alt cannot exceed --max-alt")
+    return args
+
+
+def main(argv=None):
+    args = parse(argv)
+    result = plan(args, log=print)
+    missions = result["missions"]
+    os.makedirs(args.out, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(args.kml))[0]
+    files = []
+    for m in missions:
+        path = os.path.join(args.out, f"{stem}_drone{m.index + 1:02d}.waypoints")
+        write_waypoints(m, path)
+        files.append(path)
+    write_preview_kml([tuple(p) for p in result["ring"]], missions, os.path.join(args.out, f"{stem}_plan.kml"), stem)
+    separation = result["separation"]
+    summary = {
+        "field": result["title"], "areaHa": round(result["area_m2"] / 1e4, 3), "planner": args.planner,
+        "drones": result["drones"], "camera": {"hfovDeg": args.hfov, "vfovDeg": args.vfov,
+                                               "sideOverlap": args.overlap, "frontOverlap": args.front_overlap},
+        "metresPerCanvasUnit": round(result["canvas"].scale, 4),
+        "requiredMaxAltM": round(result["needed_alt"], 1), "altitudeCapM": args.max_alt,
+        "nadirCoveragePct": round(100 * result["coverage"], 2), "capped": result["capped"],
+        "estimatedMissionS": round(result["seconds"], 1), "minSeparationM": round(separation, 1),
+        "missions": [{"file": os.path.basename(f), "items": len(m.items), "lengthM": round(m.length_m, 1),
+                      "maxAltM": round(m.max_alt, 1), "minAltM": round(m.min_alt, 1), "transits": m.transits,
+                      "photos": m.photos} for f, m in zip(files, missions)],
+    }
+    with open(os.path.join(args.out, f"{stem}_summary.json"), "w") as handle:
+        json.dump(summary, handle, indent=2)
+    print(f"\nNadir coverage at flown altitudes: {summary['nadirCoveragePct']}%  "
+          f"(max altitude {max(m.max_alt for m in missions):.1f} m, cap {args.max_alt:.0f} m)")
+    print(f"Estimated synchronised mission time: {summary['estimatedMissionS'] / 60:.1f} min; "
+          f"closest 3D approach between drones: {separation:.1f} m")
+    if separation < args.min_sep:
+        print("warning: drones pass close to each other; increase --alt-stagger or stagger launch times.")
+    for entry in summary["missions"]:
+        print(f"  {entry['file']}: {entry['items']} items, {entry['lengthM']:.0f} m, "
+              f"alt {entry['minAltM']:.0f}-{entry['maxAltM']:.0f} m, ~{entry['photos']} photos")
+    print(f"Wrote {len(files)} missions, a KML preview and a summary to {os.path.abspath(args.out)}")
+    if args.connect:
+        if len(args.connect) != len(missions):
+            raise SystemExit(f"--connect lists {len(args.connect)} links but the plan has {len(missions)} drones.")
+        for url, m in zip(args.connect, missions):
+            print(f"Uploading drone {m.index + 1} ...")
+            upload(url, m.items, timeout=args.timeout)
+    return summary
+
+
+if __name__ == "__main__":
+    main()
