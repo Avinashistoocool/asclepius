@@ -64,10 +64,18 @@ overridden, for example with `--max-alt 40`:
 | Output | `missions/` | **`missions_test/`**, files prefixed `TEST_` |
 | Upload | immediate | **checklist and a `y/N` prompt** (skip it with `--yes`) |
 
+**Fly one path of the swarm with one drone:** `--drones K --only N` plans K paths but exports
+only path N. The drone covers its own area in full (checked) and ignores the rest:
+
+```powershell
+py ardupilot_export.py field.kml --drones 4 --only 2 --test --home 77.1930 28.5466
+```
+
 Suggested progression:
 
 1. `--test` in SITL.
-2. `--test` with one real drone, with a pilot ready on the RC.
+2. `--test` with one real drone, with a pilot ready on the RC. Then `--drones K --only N`
+   to fly one real swarm path.
 3. `--test --drones 2`.
 4. A full field without `--test`.
 

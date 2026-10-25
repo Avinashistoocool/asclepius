@@ -108,6 +108,20 @@ class ArduPilotExportTests(unittest.TestCase):
             items = ap.read_waypoints(os.path.join(out, entry["file"]))
             self.assertEqual(items[-1].command, ap.MAV_CMD_NAV_RETURN_TO_LAUNCH)
 
+    def test_only_one_path_covers_its_own_area(self):
+        out = tempfile.mkdtemp()
+        summary = ap.main([FIELD, "--drones", "4", "--only", "3", "--test", "--test-size", "200",
+                           "--home", "77.1929", "28.5466", "--out", out])
+        self.assertEqual(summary["onlyPath"], 3)
+        self.assertEqual(len(summary["missions"]), 1)
+        self.assertEqual(summary["missions"][0]["file"], "TEST_field_path03of04.waypoints")
+        self.assertEqual(summary["ownAreaCoveragePct"], 100.0)
+        self.assertIsNone(summary["minSeparationM"])
+        items = ap.read_waypoints(os.path.join(out, summary["missions"][0]["file"]))
+        self.assertEqual(items[-1].command, ap.MAV_CMD_NAV_RETURN_TO_LAUNCH)
+        with self.assertRaises(SystemExit):
+            ap.parse([FIELD, "--drones", "3", "--only", "4"])
+
 
 if __name__ == "__main__":
     unittest.main()

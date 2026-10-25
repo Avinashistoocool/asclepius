@@ -91,6 +91,32 @@ py ardupilot_export.py field.kml --test --drones 2 --home 77.1930 28.5466
 3 m/s, separates drones vertically by 8 m, and asks for confirmation before any upload.
 To test without a KML file at all, use `py ardupilot_export.py --test --home LON LAT`.
 
+### One drone flying one path (covers only its own area)
+
+Split the field into K paths, as the full swarm would, and have **one** drone fly just
+one of them. It images its **own area completely** and ignores the other areas. This is
+the most realistic single-drone test, because it flies exactly what that drone would fly
+in the real swarm.
+
+```powershell
+py ardupilot_export.py field.kml --drones 4 --only 2 --test --home 77.1930 28.5466
+```
+
+```
+Paths in this 4-drone plan (pick one with --only N):
+  path 1:   204 m, alt 10-10 m, ~28 photos, 0 transit(s)
+  path 2:   270 m, alt 10-13 m, ~38 photos, 0 transit(s)  <== flying
+  ...
+Path 2: own area 0.99 ha (25% of the field); imaged by this drone alone: 100.0%
+```
+
+- `--drones 4` sets how many paths the field is split into. `--only 2` picks which one to fly.
+- Output: a single `TEST_field_path02of04.waypoints` and its `.param` file. The
+  `*_plan.kml` preview shows that path and its own area (yellow).
+- The tool checks that the drone images **100% of its own area**, and warns if it does not.
+- No altitude stagger is applied. The drone flies at its own speed and ends with RTL.
+- Without `--test`, the drone flies the same path over the full field, with normal limits.
+
 ### Full survey
 
 ```powershell

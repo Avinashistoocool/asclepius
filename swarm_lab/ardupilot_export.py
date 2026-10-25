@@ -21,6 +21,9 @@ Example
     py ardupilot_export.py field.kml --drones 3 --connect udp:127.0.0.1:14550 \
         udp:127.0.0.1:14560 udp:127.0.0.1:14570
 
+Fly ONE path of a multi-drone plan with a single drone (here path 2 of a 4-drone plan):
+    py ardupilot_export.py field.kml --drones 4 --only 2 --test --home 77.1930 28.5466
+
 Test mode (one or two drones, small area, low and slow):
     py ardupilot_export.py --test --home 77.1930 28.5466             # 80 m square at home
     py ardupilot_export.py field.kml --test --drones 2 --connect sitl  # clip field to 80 m around centroid
@@ -36,7 +39,7 @@ import sys
 import time
 import zipfile
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -412,7 +415,7 @@ def write_params(params, path, index, home_given):
             handle.write(f"{name},{value}\n")
 
 
-def write_preview_kml(boundary_lonlat, missions, path, title):
+def write_preview_kml(boundary_lonlat, missions, path, title, lanes=()):
     colours = ["ff00ffcc", "ff3399ff", "ffff66cc", "ff66ff33", "ff3333ff", "ffffcc00", "ffcc66ff", "ff00ccff"]
     out = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
            f"<name>{title} swarm plan</name>"]
@@ -420,6 +423,12 @@ def write_preview_kml(boundary_lonlat, missions, path, title):
     out.append(f'<Placemark><name>Field</name><Style><LineStyle><color>ffffffff</color><width>2</width></LineStyle>'
                f'<PolyStyle><color>2200ff00</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing>'
                f'<coordinates>{ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>')
+    for ring in lanes:
+        coords = " ".join(f"{lon:.8f},{lat:.8f},0" for lon, lat in list(ring) + [ring[0]])
+        out.append(f'<Placemark><name>Area covered by this drone</name><Style><LineStyle><color>ff00ffff</color>'
+                   f'<width>2</width></LineStyle><PolyStyle><color>5500ffff</color></PolyStyle></Style><Polygon>'
+                   f'<outerBoundaryIs><LinearRing><coordinates>{coords}</coordinates></LinearRing></outerBoundaryIs>'
+                   f'</Polygon></Placemark>')
     for m in missions:
         if m.waypoints is None or not len(m.waypoints):
             continue
@@ -434,8 +443,27 @@ def write_preview_kml(boundary_lonlat, missions, path, title):
 
 
 # --------------------------------------------------------------------------- planning
-def coverage_at(polygon_canvas, paths, headings_deg, altitudes, hfov, vfov, size):
-    """Fraction of the field imaged with the given (possibly capped) altitudes, in canvas units."""
+def lane_mask(method, index, size):
+    """Grid cells that belong to drone `index` (the planner stores lanes at half resolution)."""
+    lanes = method["lanes"]
+    image = np.asarray(lanes["values"]).reshape(lanes["height"], lanes["width"])
+    full = np.repeat(np.repeat(image, 2, axis=0), 2, axis=1)[:size, :size]
+    return full == index
+
+
+def lane_outlines(mask, grid, canvas, frame):
+    """Lon/lat outlines of a lane mask, for the KML preview."""
+    from skimage.measure import find_contours
+    rings = []
+    for contour in find_contours(np.pad(mask, 1).astype(float), .5):
+        xy = (contour[:, ::-1] - 1) * grid.spacing
+        if len(xy) > 3:
+            rings.append(frame.to_lonlat(canvas.to_metres(xy)))
+    return rings
+
+
+def coverage_at(polygon_canvas, paths, headings_deg, altitudes, hfov, vfov, size, region=None):
+    """Fraction of the field (or of `region` cells) imaged at the given altitudes, in canvas units."""
     grid = Grid(polygon_canvas, size)
     hits = np.zeros(grid.mask.shape, dtype=np.int32)
     tan_x, tan_y = math.tan(math.radians(hfov) / 2), math.tan(math.radians(vfov) / 2)
@@ -444,8 +472,8 @@ def coverage_at(polygon_canvas, paths, headings_deg, altitudes, hfov, vfov, size
             continue
         h = np.radians(heading)
         sweep_footprints(grid, path, {"heading": np.c_[np.cos(h), np.sin(h)], "altitude": alt}, tan_x, tan_y, hits)
-    field_cells = np.count_nonzero(grid.mask)
-    return np.count_nonzero(grid.mask & (hits > 0)) / max(field_cells, 1)
+    target = grid.mask if region is None else grid.mask & region
+    return np.count_nonzero(target & (hits > 0)) / max(np.count_nonzero(target), 1)
 
 
 def plan(args, log=print):
@@ -502,7 +530,8 @@ def plan(args, log=print):
     # Each drone gets its own altitude band (+i * stagger) so converging drones stay vertically separated.
     # Raising altitude only enlarges footprints, so this never reduces coverage.
     alts_m = [np.clip(a * canvas.scale, args.min_alt, args.max_alt) for a in alts_canvas]
-    alts_m = [np.minimum(a + i * args.alt_stagger, args.max_alt) for i, a in enumerate(alts_m)]
+    if not args.only:
+        alts_m = [np.minimum(a + i * args.alt_stagger, args.max_alt) for i, a in enumerate(alts_m)]
     capped = any(np.any(a * canvas.scale > args.max_alt) for a in alts_canvas)
     coverage = coverage_at(polygon, paths, heads, [a / canvas.scale for a in alts_m], args.hfov, args.vfov, args.grid)
     if capped and coverage < 1:
@@ -522,6 +551,23 @@ def plan(args, log=print):
         usable = np.where(s > args.jump_m, 0., s)
         seconds[:len(s)] = np.maximum(seconds[:len(s)], usable / args.speed)
 
+    lane_coverage, lane_rings = None, []
+    if args.only:
+        # One drone flies path N alone: it must image its own lane completely; other lanes are not its job.
+        k = args.only - 1
+        region = lane_mask(method, k, args.grid)
+        lane_coverage = coverage_at(polygon, [paths[k]], [heads[k]], [alts_m[k] / canvas.scale], args.hfov, args.vfov,
+                                    args.grid, region=region)
+        lane_rings = lane_outlines(region & Grid(polygon, args.grid).mask, Grid(polygon, args.grid), canvas, frame)
+        lane_area = np.count_nonzero(region & Grid(polygon, args.grid).mask) * (Grid(polygon, args.grid).spacing
+                                                                              * canvas.scale) ** 2
+        log(f"Path {args.only}: own area {lane_area / 1e4:.2f} ha "
+            f"({100 * lane_area / max(area_m2, 1e-9):.0f}% of the field); "
+            f"imaged by this drone alone: {100 * lane_coverage:.1f}%")
+        if lane_coverage < 1:
+            log(f"warning: path {args.only} does not fully image its own area at <= {args.max_alt:.0f} m; "
+                f"raise --max-alt or split the field into more paths (--drones).")
+
     home = (float(centre[0]), float(centre[1])) if args.home is None else tuple(args.home)
     missions = []
     for i, (p, a) in enumerate(zip(en_paths, alts_m)):
@@ -530,7 +576,7 @@ def plan(args, log=print):
     return {"title": title, "ring": ring, "frame": frame, "canvas": canvas, "result": result, "method": method,
             "missions": missions, "coverage": coverage, "capped": capped, "needed_alt": needed, "drones": drones,
             "area_m2": area_m2, "seconds": float(np.sum(seconds)), "home": home,
-            "separation": min_separation(en_paths, alts_m)}
+            "separation": min_separation(en_paths, alts_m), "lane_coverage": lane_coverage, "lane_rings": lane_rings}
 
 
 def min_separation(en_paths, alts_m):
@@ -654,6 +700,9 @@ def parse(argv=None):
                            "--home (or the centroid), files prefixed TEST_, confirmation before upload")
     test.add_argument("--test-size", type=float, default=80., help="Side of the test square in metres (default 80)")
     test.add_argument("--yes", action="store_true", help="Skip the upload confirmation prompt")
+    test.add_argument("--only", type=int, metavar="N",
+                      help="Plan --drones paths but export/upload only path N, to be flown by ONE drone "
+                           "(no altitude stagger, own speed). Open *_plan.kml to see which path is which")
     args = p.parse_args(argv)
     for key, value in (TEST_DEFAULTS if args.test else NORMAL_DEFAULTS).items():
         if getattr(args, key) is None:
@@ -661,8 +710,14 @@ def parse(argv=None):
     if args.kml is None:
         if not (args.test and args.home):
             p.error("give a field file (.kml/.kmz/.poly), or use --test --home LON LAT for a test square")
-    if args.test and not 1 <= args.drones <= 2:
-        p.error("--test supports 1 or 2 drones; drop --test for a full swarm")
+    if args.only is not None:
+        if args.test and args.drones == TEST_DEFAULTS["drones"] and "--drones" not in (argv or sys.argv):
+            p.error("--only needs --drones K: the number of paths to split the field into (e.g. --drones 4 --only 2)")
+        if not 1 <= args.only <= args.drones:
+            p.error(f"--only must be between 1 and --drones ({args.drones})")
+        args.sync = False  # one drone flies alone: use its own speed, not the formation timing
+    if args.test and args.only is None and not 1 <= args.drones <= 2:
+        p.error("--test supports 1 or 2 drones; drop --test for a full swarm, or fly one path with --only N")
     if args.test and args.test_size < 20:
         p.error("--test-size must be at least 20 m")
     if not 1 <= args.drones <= 64:
@@ -675,7 +730,7 @@ def parse(argv=None):
         print(f"warning: --rtl-alt {args.rtl_alt:.0f} m is below --max-alt {args.max_alt:.0f} m; "
               "drones may descend into the survey layer on the way home.", file=sys.stderr)
     if args.connect == ["sitl"]:
-        args.connect = [f"tcp:127.0.0.1:{5760 + 10 * i}" for i in range(args.drones)]
+        args.connect = [f"tcp:127.0.0.1:{5760 + 10 * i}" for i in range(1 if args.only else args.drones)]
     return args
 
 
@@ -687,18 +742,36 @@ def main(argv=None):
     stem = os.path.splitext(os.path.basename(args.kml))[0] if args.kml else "square"
     if args.test:
         stem = "TEST_" + stem
-        print(f"TEST MODE: {args.drones} drone(s), altitude {args.min_alt:.0f}-{args.max_alt:.0f} m, "
+        flying = 1 if args.only else args.drones
+        print(f"TEST MODE: {flying} drone(s), altitude {args.min_alt:.0f}-{args.max_alt:.0f} m, "
               f"speed <= {args.speed:.0f} m/s, area <= {args.test_size:.0f} m square")
+    preview = os.path.join(args.out, f"{stem}_plan.kml")
+    names = [f"{stem}_drone{m.index + 1:02d}" for m in missions]
+    if args.only:
+        print(f"\nPaths in this {len(missions)}-drone plan (pick one with --only N):")
+        for m in missions:
+            mark = "  <== flying" if m.index + 1 == args.only else ""
+            print(f"  path {m.index + 1}: {m.length_m:5.0f} m, alt {m.min_alt:.0f}-{m.max_alt:.0f} m, "
+                  f"~{m.photos} photos, {m.transits} transit(s){mark}")
+        chosen = missions[args.only - 1]
+        if chosen.waypoints is None or not len(chosen.waypoints):
+            raise SystemExit(f"Path {args.only} is empty; choose another with --only.")
+        names = [f"{stem}_path{args.only:02d}of{len(missions):02d}"]
+        missions = [replace(chosen, index=0)]  # flown alone: drone 1 settings (RTL height, no stagger)
+        write_preview_kml([tuple(p) for p in result["ring"]], [replace(chosen, index=args.only - 1)], preview, stem,
+                          lanes=result["lane_rings"])
+        result["seconds"] = chosen.length_m / args.speed
+        result["separation"] = float("inf")
+    else:
+        write_preview_kml([tuple(p) for p in result["ring"]], missions, preview, stem)
     files = []
-    for m in missions:
-        path = os.path.join(args.out, f"{stem}_drone{m.index + 1:02d}.waypoints")
+    for m, name in zip(missions, names):
+        path = os.path.join(args.out, name + ".waypoints")
         write_waypoints(m, path)
         files.append(path)
-    write_preview_kml([tuple(p) for p in result["ring"]], missions, os.path.join(args.out, f"{stem}_plan.kml"), stem)
     params = safety_params(missions, result["home"], args)
-    for m, values in zip(missions, params):
-        write_params(values, os.path.join(args.out, f"{stem}_drone{m.index + 1:02d}.param"), m.index,
-                     args.home is not None)
+    for m, values, name in zip(missions, params, names):
+        write_params(values, os.path.join(args.out, name + ".param"), m.index, args.home is not None)
     separation = result["separation"]
     summary = {
         "field": result["title"], "areaHa": round(result["area_m2"] / 1e4, 3), "planner": args.planner,
@@ -709,6 +782,8 @@ def main(argv=None):
         "nadirCoveragePct": round(100 * result["coverage"], 2), "capped": result["capped"],
         "estimatedMissionS": round(result["seconds"], 1),
         "minSeparationM": round(separation, 1) if math.isfinite(separation) else None, "test": args.test,
+        "onlyPath": args.only,
+        "ownAreaCoveragePct": None if result["lane_coverage"] is None else round(100 * result["lane_coverage"], 2),
         "missions": [{"file": os.path.basename(f), "items": len(m.items), "lengthM": round(m.length_m, 1),
                       "maxAltM": round(m.max_alt, 1), "minAltM": round(m.min_alt, 1), "transits": m.transits,
                       "photos": m.photos, "rtlAltM": values["RTL_ALT"] / 100, "fenceRadiusM": values["FENCE_RADIUS"],
@@ -717,10 +792,16 @@ def main(argv=None):
     }
     with open(os.path.join(args.out, f"{stem}_summary.json"), "w") as handle:
         json.dump(summary, handle, indent=2)
-    print(f"\nNadir coverage at flown altitudes: {summary['nadirCoveragePct']}%  "
-          f"(max altitude {max(m.max_alt for m in missions):.1f} m, cap {args.max_alt:.0f} m)")
+    if args.only:
+        print(f"\nFlying path {args.only} of {result['drones']} with one drone: it images "
+              f"{summary['ownAreaCoveragePct']}% of its own area (yellow in {stem}_plan.kml). "
+              f"The rest of the field is left for the other paths.")
+    else:
+        print(f"\nNadir coverage at flown altitudes: {summary['nadirCoveragePct']}%  "
+              f"(max altitude {max(m.max_alt for m in missions):.1f} m, cap {args.max_alt:.0f} m)")
     spacing = f"closest 3D approach between drones: {separation:.1f} m" if math.isfinite(separation) else "single drone"
-    print(f"Estimated synchronised mission time: {summary['estimatedMissionS'] / 60:.1f} min; {spacing}")
+    kind = "Estimated flight time" if args.only else "Estimated synchronised mission time"
+    print(f"{kind}: {summary['estimatedMissionS'] / 60:.1f} min; {spacing}")
     if separation < args.min_sep:
         print("warning: drones pass close to each other; increase --alt-stagger or stagger launch times.")
     for entry in summary["missions"]:
