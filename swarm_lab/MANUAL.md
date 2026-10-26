@@ -87,9 +87,28 @@ Then step up to two drones:
 py ardupilot_export.py field.kml --test --drones 2 --home 77.1930 28.5466
 ```
 
-`--test` uses an 80 m square of the field around home, flies at 10 to 30 m and at most
-3 m/s, separates drones vertically by 8 m, and asks for confirmation before any upload.
-To test without a KML file at all, use `py ardupilot_export.py --test --home LON LAT`.
+`--test` flies the **real field** from your KML at safe first-flight settings: 10 to 30 m,
+at most 3 m/s, 8 m vertical separation, and a confirmation prompt before upload. To fly
+only part of a large field, add `--test-size M`, which keeps an M-metre square around
+home. To test without a KML file at all, use `py ardupilot_export.py --test --home LON LAT`
+(an 80 m square at home).
+
+### Boundary fence: RTL if the drone touches the field edge
+
+Every run builds an **inclusion fence** from the KML boundary, grown outward by
+`--fence-buffer` (default 5 m), plus a corridor to home. **If the drone crosses it, it
+returns home immediately.** The fence is:
+
+- written to `*_fence.waypoints` and `*_fence.poly` (Mission Planner: **PLAN ? Fence ?
+  Load from file**), and drawn in red in `*_plan.kml`;
+- uploaded and read back automatically with `--connect`, together with `FENCE_TYPE = 7`
+  (altitude + circle + polygon) and `FENCE_ACTION = 1` (RTL);
+- checked against the planned path. If the path comes within `accept-radius + 3` m of the
+  fence, the tool warns you to increase `--fence-buffer`, so that GPS drift does not
+  trigger a false RTL.
+
+Use `--no-boundary-fence` to turn it off. The fence needs MAVLink 2 on the telemetry port
+(`SERIALn_PROTOCOL = 2`); otherwise the upload stops rather than overwriting the mission.
 
 ### One drone flying one path (covers only its own area)
 
@@ -318,7 +337,7 @@ RTL also happens **automatically** if:
 | Event | Trigger |
 | --- | --- |
 | Mission finished | Last mission item |
-| Geofence breached: above `--RTLheight` / `FENCE_ALT_MAX`, or beyond `FENCE_RADIUS` | `FENCE_ACTION = 1` |
+| Geofence breached: outside the field boundary fence, above `--RTLheight` / `FENCE_ALT_MAX`, or beyond `FENCE_RADIUS` | `FENCE_ACTION = 1` |
 | RC link lost | `FS_THR_ENABLE = 1` |
 | Battery low | `BATT_FS_LOW_ACT = 2` |
 | Telemetry lost (if enabled) | `FS_GCS_ENABLE = 1` |

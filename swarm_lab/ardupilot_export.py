@@ -43,6 +43,9 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+# Fence uploads need MAVLink 2: MAVLink 1 drops `mission_type`, and a fence would overwrite the mission.
+os.environ.setdefault("MAVLINK20", "1")
+
 from boundary import validate_polygon
 from nadir import JUMP, headings, sweep_footprints
 from sweep import Grid, compare
@@ -60,6 +63,9 @@ MAV_CMD_NAV_RETURN_TO_LAUNCH = 20
 MAV_CMD_NAV_TAKEOFF = 22
 MAV_CMD_DO_CHANGE_SPEED = 178
 MAV_CMD_DO_SET_CAM_TRIGG_DIST = 206
+MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION = 5001
+FENCE_TYPE_ALT, FENCE_TYPE_CIRCLE, FENCE_TYPE_POLYGON = 1, 2, 4
+MISSION_TYPE_MISSION, MISSION_TYPE_FENCE = 0, 1
 
 
 # --------------------------------------------------------------------------- KML input
@@ -378,6 +384,67 @@ def read_waypoints(path):
 FENCE_MARGIN = 2
 
 
+def boundary_fence(ring_lonlat, missions, home, buffer, max_vertices=60):
+    """Inclusion polygon = field grown by `buffer` m, plus home and the legs home->first and last->home.
+
+    Leaving it (touching the field boundary + buffer) breaches the fence and triggers RTL. The take-off,
+    the transit to the first waypoint and the mission-end RTL leg stay inside, so they never trip it.
+    Returns (lon/lat vertices, metrics).
+    """
+    from shapely.geometry import LineString, Point, Polygon
+    from shapely.ops import unary_union
+
+    frame = LocalFrame(home[1], home[0])
+    field_poly = Polygon(frame.to_en(ring_lonlat)).buffer(0)
+    parts = [field_poly.buffer(buffer, join_style=2, mitre_limit=2.), Point(0, 0).buffer(buffer)]
+    clearance = float("inf")
+    for m in missions:
+        if m.waypoints is None or not len(m.waypoints):
+            continue
+        en = frame.to_en(m.waypoints[:, :2])
+        parts.append(LineString([(0, 0), tuple(en[0])]).buffer(buffer))
+        parts.append(LineString([tuple(en[-1]), (0, 0)]).buffer(buffer))
+        clearance = min(clearance, min(field_poly.exterior.distance(Point(*q)) if field_poly.contains(Point(*q))
+                                       else -field_poly.exterior.distance(Point(*q)) for q in en))
+    shape = unary_union(parts)
+    if shape.geom_type != "Polygon":
+        shape = max(shape.geoms, key=lambda g: g.area)
+    shape = Polygon(shape.exterior)  # inclusion fences cannot have holes
+    # Grow slightly before simplifying so simplification never moves the fence inward of the buffer.
+    grown, tolerance = shape.buffer(.5, join_style=2), .3
+    simple = grown.simplify(tolerance, preserve_topology=True)
+    while len(simple.exterior.coords) - 1 > max_vertices:
+        tolerance *= 1.5
+        simple = grown.buffer(tolerance, join_style=2).simplify(tolerance, preserve_topology=True)
+    coords = np.asarray(simple.exterior.coords)[:-1]
+    if Polygon(coords).exterior.is_ccw:
+        coords = coords[::-1]
+    return frame.to_lonlat(coords), {"bufferM": buffer, "vertices": int(len(coords)),
+                                     "pathClearanceM": None if not math.isfinite(clearance) else round(clearance, 1),
+                                     "homeInsideField": bool(field_poly.buffer(buffer).contains(Point(0, 0)))}
+
+
+def fence_items(vertices_lonlat):
+    n = len(vertices_lonlat)
+    return [MissionItem(MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, MAV_FRAME_GLOBAL, (float(n), 0., 0., 0.),
+                        float(lat), float(lon), 0.) for lon, lat in vertices_lonlat]
+
+
+def write_fence_files(vertices_lonlat, stem_path):
+    """Fence as a QGC WPL file (fence vertex commands) and as a Mission Planner .poly (lat lon per line)."""
+    items = fence_items(vertices_lonlat)
+    with open(stem_path + "_fence.waypoints", "w", newline="\n") as handle:
+        handle.write("QGC WPL 110\n")
+        for seq, item in enumerate(items):
+            handle.write("\t".join(str(v) for v in (
+                seq, 0, item.frame, item.command, f"{item.params[0]:.8f}", "0.00000000", "0.00000000", "0.00000000",
+                f"{item.lat:.8f}", f"{item.lon:.8f}", "0.000000", 1)) + "\n")
+    with open(stem_path + "_fence.poly", "w", newline="\n") as handle:
+        handle.write("#saved by ardupilot_export.py (inclusion fence)\n")
+        for lon, lat in list(vertices_lonlat) + [vertices_lonlat[0]]:
+            handle.write(f"{lat:.8f} {lon:.8f}\n")
+
+
 def safety_params(missions, home, args):
     """Suggested per-drone ArduCopter parameters for the return leg and a geofence around home.
 
@@ -412,7 +479,7 @@ def safety_params(missions, home, args):
             "RTL_ALT": int(round(rtl * 100)),            # cm
             "RTL_ALT_FINAL": 0,                          # land at home
             "FENCE_ENABLE": 1,
-            "FENCE_TYPE": 3,                             # max altitude + circle around home
+            "FENCE_TYPE": FENCE_TYPE_ALT | FENCE_TYPE_CIRCLE | (FENCE_TYPE_POLYGON if args.boundary_fence else 0),
             "FENCE_ACTION": 1,                           # RTL (or land if RTL is impossible)
             "FENCE_ALT_MAX": int(math.floor(fence_alt)) if args.rtl_height is not None else int(fence_alt),
             "FENCE_RADIUS": int(radius),                 # m from home
@@ -430,6 +497,17 @@ def write_params(params, path, index, home_given):
             handle.write("# FENCE_RADIUS assumes take-off near the field centre; re-run with --home LON LAT otherwise.\n")
         for name, value in params.items():
             handle.write(f"{name},{value}\n")
+
+
+def _append_fence_to_preview(path, vertices_lonlat):
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    coords = " ".join(f"{lon:.8f},{lat:.8f},0" for lon, lat in list(vertices_lonlat) + [vertices_lonlat[0]])
+    mark = (f'<Placemark><name>Boundary fence (leave = RTL)</name><Style><LineStyle><color>ff0000ff</color>'
+            f'<width>3</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style><Polygon><outerBoundaryIs>'
+            f'<LinearRing><coordinates>{coords}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>')
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text.replace("</Document></kml>", mark + "</Document></kml>"))
 
 
 def write_preview_kml(boundary_lonlat, missions, path, title, lanes=()):
@@ -501,12 +579,12 @@ def plan(args, log=print):
         # Test mode without a field file: a square of --test-size metres centred on home.
         lon, lat = args.home
         f0 = LocalFrame(lat, lon)
-        half = args.test_size / 2
+        half = (args.test_size or 80.) / 2
         title, ring = "Test square", f0.to_lonlat(np.array([[-half, -half], [half, -half], [half, half], [-half, half]]))
     centre = ring.mean(axis=0)
     frame = LocalFrame(float(centre[1]), float(centre[0]))
     en = frame.to_en(ring)
-    if args.test and args.kml and args.test_size:
+    if args.kml and args.test_size:
         anchor = frame.to_en(np.array([args.home]))[0] if args.home else en.mean(axis=0)
         clipped = clip_to_square(en, anchor, args.test_size / 2)
         if len(clipped) < 3 or abs(np.sum(clipped[:, 0] * np.roll(clipped[:, 1], -1)
@@ -610,13 +688,11 @@ def min_separation(en_paths, alts_m):
 
 
 # --------------------------------------------------------------------------- MAVLink upload
-def upload(connection, items, timeout=10., verify=True, log=print, params=None):
-    """Upload a mission with the MAVLink mission protocol, read it back, then set `params` (each confirmed)."""
+def _connect(connection, timeout):
     from pymavlink import mavutil
 
     link = mavutil.mavlink_connection(connection, source_system=255, source_component=190, autoreconnect=True)
-    deadline = time.time() + timeout
-    heartbeat = None
+    deadline, heartbeat = time.time() + timeout, None
     while heartbeat is None and time.time() < deadline:
         link.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
         heartbeat = link.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
@@ -624,41 +700,63 @@ def upload(connection, items, timeout=10., verify=True, log=print, params=None):
             heartbeat = None
     if heartbeat is None:
         raise TimeoutError(f"No vehicle heartbeat on {connection}.")
-    system, component = heartbeat.get_srcSystem(), heartbeat.get_srcComponent()
-    mission_type = mavutil.mavlink.MAV_MISSION_TYPE_MISSION
+    return link, heartbeat.get_srcSystem(), heartbeat.get_srcComponent()
+
+
+def _send_items(link, system, component, items, mission_type, timeout, verify, label):
+    """MAVLink mission protocol (works for missions and fences), with optional item-by-item read-back."""
+    from pymavlink import mavutil
+
     link.mav.mission_count_send(system, component, len(items), mission_type)
     sent = set()
     while True:
         message = link.recv_match(type=["MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK"], blocking=True,
                                   timeout=timeout)
         if message is None:
-            raise TimeoutError(f"Vehicle {system} stopped requesting mission items ({len(sent)}/{len(items)} sent).")
+            raise TimeoutError(f"Vehicle {system} stopped requesting {label} items ({len(sent)}/{len(items)} sent).")
+        if getattr(message, "mission_type", mission_type) != mission_type:
+            continue
         if message.get_type() == "MISSION_ACK":
             if message.type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                raise RuntimeError(f"Vehicle {system} rejected the mission (MAV_MISSION_RESULT {message.type}).")
+                raise RuntimeError(f"Vehicle {system} rejected the {label} (MAV_MISSION_RESULT {message.type}).")
             break
-        seq = message.seq
-        item = items[seq]
+        item = items[message.seq]
         p = [0. if math.isnan(v) else v for v in item.params] if message.get_type() == "MISSION_REQUEST" else item.params
-        link.mav.mission_item_int_send(system, component, seq, item.frame, item.command, item.current,
+        link.mav.mission_item_int_send(system, component, message.seq, item.frame, item.command, item.current,
                                        item.autocontinue, *[float(v) for v in p], int(round(item.lat * 1e7)),
                                        int(round(item.lon * 1e7)), float(item.alt), mission_type)
-        sent.add(seq)
-    log(f"  uploaded {len(items)} items to system {system} on {connection}")
+        sent.add(message.seq)
     if verify:
         link.mav.mission_request_list_send(system, component, mission_type)
         count = link.recv_match(type="MISSION_COUNT", blocking=True, timeout=timeout)
         if count is None or count.count != len(items):
-            raise RuntimeError(f"Read-back count mismatch on system {system}.")
-        for seq in range(1, count.count):  # item 0 is home, which the autopilot rewrites
+            raise RuntimeError(f"Read-back count mismatch for the {label} on system {system}.")
+        first = 1 if mission_type == MISSION_TYPE_MISSION else 0  # mission item 0 is home, rewritten by the autopilot
+        for seq in range(first, count.count):
             link.mav.mission_request_int_send(system, component, seq, mission_type)
             got = link.recv_match(type="MISSION_ITEM_INT", blocking=True, timeout=timeout)
             want = items[seq]
             if (got is None or got.command != want.command or abs(got.x - round(want.lat * 1e7)) > 1
                     or abs(got.y - round(want.lon * 1e7)) > 1 or abs(got.z - want.alt) > .01):
-                raise RuntimeError(f"Read-back mismatch at item {seq} on system {system}.")
+                raise RuntimeError(f"Read-back mismatch at {label} item {seq} on system {system}.")
         link.mav.mission_ack_send(system, component, mavutil.mavlink.MAV_MISSION_ACCEPTED, mission_type)
-        log(f"  verified read-back on system {system}")
+
+
+def upload(connection, items, timeout=10., verify=True, log=print, params=None, fence=None):
+    """Upload the mission, then the inclusion fence, then `params` (each confirmed). Everything is verified."""
+    from pymavlink import mavutil
+
+    link, system, component = _connect(connection, timeout)
+    _send_items(link, system, component, items, MISSION_TYPE_MISSION, timeout, verify, "mission")
+    log(f"  uploaded {len(items)} mission items to system {system} on {connection}"
+        f"{' (verified read-back)' if verify else ''}")
+    if fence:
+        if not link.mavlink20():
+            link.close()
+            raise RuntimeError("Link is not MAVLink 2; refusing to upload the fence (it would replace the mission). "
+                               "Set SERIALn_PROTOCOL=2 on the drone's telemetry port.")
+        _send_items(link, system, component, fence, MISSION_TYPE_FENCE, timeout, verify, "fence")
+        log(f"  uploaded {len(fence)}-vertex boundary fence to system {system}{' (verified read-back)' if verify else ''}")
     if params:
         for name, value in params.items():
             for attempt in range(3):
@@ -671,8 +769,8 @@ def upload(connection, items, timeout=10., verify=True, log=print, params=None):
                 link.close()
                 raise RuntimeError(f"Vehicle {system} did not confirm {name}={value}. Set it in Mission Planner.")
         log(f"  set {len(params)} safety parameters on system {system} "
-            f"(RTL_ALT {params['RTL_ALT'] / 100:.0f} m, fence {params['FENCE_ALT_MAX']} m high / "
-            f"{params['FENCE_RADIUS']} m radius, breach -> RTL)")
+            f"(RTL_ALT {params['RTL_ALT'] / 100:.0f} m, FENCE_TYPE {params['FENCE_TYPE']}, "
+            f"ceiling {params['FENCE_ALT_MAX']} m, radius {params['FENCE_RADIUS']} m, breach -> RTL)")
     link.close()
     return system
 
@@ -730,6 +828,11 @@ def parse(argv=None):
     p.add_argument("--RTLheight", "--rtl-height", dest="rtl_height", type=float, default=None, metavar="M",
                    help="Failsafe ceiling: a drone that climbs above M metres over home returns home (RTL). "
                         "Sets FENCE_ALT_MAX=M with FENCE_ACTION=RTL; survey and RTL altitudes are kept below M")
+    p.add_argument("--no-boundary-fence", dest="boundary_fence", action="store_false",
+                   help="Do not add the inclusion fence that triggers RTL when a drone leaves the field")
+    p.add_argument("--fence-buffer", type=float, default=5., metavar="M",
+                   help="Metres the boundary fence sits outside the field edge (GPS error + waypoint radius). "
+                        "Default 5")
     p.add_argument("--no-params", dest="push_params", action="store_false",
                    help="With --connect, upload only the mission, not the RTL/fence safety parameters")
     p.add_argument("--rtl-margin", type=float, default=5., help="Metres above the highest survey altitude for RTL")
@@ -741,9 +844,11 @@ def parse(argv=None):
     p.add_argument("--timeout", type=float, default=10.)
     test = p.add_argument_group("test mode")
     test.add_argument("--test", action="store_true",
-                      help="First-flight mode: 1-2 drones, 30 m cap, 3 m/s, field clipped to --test-size around "
-                           "--home (or the centroid), files prefixed TEST_, confirmation before upload")
-    test.add_argument("--test-size", type=float, default=80., help="Side of the test square in metres (default 80)")
+                      help="First-flight mode on the real field: 1-2 drones, 30 m cap, 3 m/s, 8 m separation, "
+                           "files prefixed TEST_, confirmation before upload")
+    test.add_argument("--test-size", type=float, default=None, metavar="M",
+                      help="Optional: fly only an M-metre square of the field around --home (or the centroid). "
+                           "Without a field file, --test --home flies an 80 m square at home")
     test.add_argument("--yes", action="store_true", help="Skip the upload confirmation prompt")
     test.add_argument("--only", type=lambda v: v if v == "middle" else int(v), metavar="N",
                       help="Plan --drones paths but export/upload only path N (or 'middle'), flown by ONE drone "
@@ -766,7 +871,7 @@ def parse(argv=None):
         args.sync = False  # one drone flies alone: use its own speed, not the formation timing
     if args.test and args.only is None and not 1 <= args.drones <= 2:
         p.error("--test supports 1 or 2 drones; drop --test for a full swarm, or fly one path with --only N")
-    if args.test and args.test_size < 20:
+    if args.test_size is not None and args.test_size < 20:
         p.error("--test-size must be at least 20 m")
     if not 1 <= args.drones <= 64:
         p.error("--drones must be between 1 and 64")
@@ -803,8 +908,10 @@ def main(argv=None):
     if args.test:
         stem = "TEST_" + stem
         flying = 1 if args.only else args.drones
+        area = f"{args.test_size:.0f} m square of the field" if args.test_size and args.kml else (
+            "80 m square at home" if not args.kml else "whole field")
         print(f"TEST MODE: {flying} drone(s), altitude {args.min_alt:.0f}-{args.max_alt:.0f} m, "
-              f"speed <= {args.speed:.0f} m/s, area <= {args.test_size:.0f} m square")
+              f"speed <= {args.speed:.0f} m/s, area: {area}")
     preview = os.path.join(args.out, f"{stem}_plan.kml")
     names = [f"{stem}_drone{m.index + 1:02d}" for m in missions]
     if args.only:
@@ -830,6 +937,12 @@ def main(argv=None):
         write_waypoints(m, path)
         files.append(path)
     params = safety_params(missions, result["home"], args)
+    fence, fence_info = None, None
+    if args.boundary_fence:
+        fence_ll, fence_info = boundary_fence(result["ring"], missions, result["home"], args.fence_buffer)
+        fence = fence_items(fence_ll)
+        write_fence_files(fence_ll, os.path.join(args.out, stem))
+        _append_fence_to_preview(preview, fence_ll)
     for m, values, name in zip(missions, params, names):
         write_params(values, os.path.join(args.out, name + ".param"), m.index, args.home is not None)
     separation = result["separation"]
@@ -842,7 +955,7 @@ def main(argv=None):
         "nadirCoveragePct": round(100 * result["coverage"], 2), "capped": result["capped"],
         "estimatedMissionS": round(result["seconds"], 1),
         "minSeparationM": round(separation, 1) if math.isfinite(separation) else None, "test": args.test,
-        "onlyPath": args.only, "rtlHeightM": args.rtl_height,
+        "onlyPath": args.only, "rtlHeightM": args.rtl_height, "boundaryFence": fence_info,
         "ownAreaCoveragePct": None if result["lane_coverage"] is None else round(100 * result["lane_coverage"], 2),
         "missions": [{"file": os.path.basename(f), "items": len(m.items), "lengthM": round(m.length_m, 1),
                       "maxAltM": round(m.max_alt, 1), "minAltM": round(m.min_alt, 1), "transits": m.transits,
@@ -868,18 +981,30 @@ def main(argv=None):
         print(f"  {entry['file']}: {entry['items']} items, {entry['lengthM']:.0f} m, "
               f"alt {entry['minAltM']:.0f}-{entry['maxAltM']:.0f} m, ~{entry['photos']} photos, "
               f"RTL at {entry['rtlAltM']:.0f} m, fence {entry['fenceRadiusM']} m / {entry['fenceAltMaxM']} m")
-    print(f"Failsafe: above {summary['missions'][0]['fenceAltMaxM']} m"
-          f"{'' if args.rtl_height is None else ' (--RTLheight)'} or beyond {summary['missions'][0]['fenceRadiusM']} m "
-          f"from home -> RTL to home")
+    triggers = []
+    if fence_info:
+        triggers.append(f"leaving the field boundary (+{fence_info['bufferM']:g} m)")
+    triggers.append(f"climbing above {summary['missions'][0]['fenceAltMaxM']} m"
+                    f"{'' if args.rtl_height is None else ' (--RTLheight)'}")
+    triggers.append(f"going beyond {summary['missions'][0]['fenceRadiusM']} m from home")
+    print("Failsafe RTL to home on: " + "; ".join(triggers) + ". Mission end: RTL.")
+    if fence_info:
+        margin = None if fence_info["pathClearanceM"] is None else fence_info["pathClearanceM"] + fence_info["bufferM"]
+        if margin is not None and margin < args.accept_radius + 3:
+            print(f"warning: the path comes within {margin:.1f} m of the boundary fence; GPS drift or overshoot "
+                  f"could trigger RTL. Increase --fence-buffer.")
+        if not fence_info["homeInsideField"]:
+            print("note: home is outside the field; the fence includes a corridor from home to the field.")
     if max(e["fenceAltMaxM"] for e in summary["missions"]) > 120:
         print("warning: a fence/RTL altitude exceeds 120 m AGL; check your local altitude limit.")
-    print(f"Wrote {len(files)} missions, {len(files)} .param files, a KML preview and a summary to "
-          f"{os.path.abspath(args.out)}")
+    print(f"Wrote {len(files)} mission(s), .param file(s){', a boundary fence' if fence else ''}, a KML preview "
+          f"and a summary to {os.path.abspath(args.out)}")
     if args.connect:
         if len(args.connect) != len(missions):
             raise SystemExit(f"--connect lists {len(args.connect)} links but the plan has {len(missions)} drones.")
         if args.test and not args.yes:
-            what = "mission + RTL/fence parameters" if args.push_params else "mission only"
+            what = ("mission + boundary fence + RTL/fence parameters" if fence else "mission + RTL/fence parameters") \
+                if args.push_params else "mission only"
             print(f"\nTEST UPLOAD ({what}). CHECKLIST: props clear, RC pilot ready, RTL switch on the RC, "
                   f"preview checked in {stem}_plan.kml")
             try:
@@ -891,7 +1016,8 @@ def main(argv=None):
                 return summary
         for url, m, values in zip(args.connect, missions, params):
             print(f"Uploading drone {m.index + 1} ...")
-            upload(url, m.items, timeout=args.timeout, params=values if args.push_params else None)
+            upload(url, m.items, timeout=args.timeout, params=values if args.push_params else None,
+                   fence=fence if args.push_params else None)
     return summary
 
 

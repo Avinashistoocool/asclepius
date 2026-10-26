@@ -81,9 +81,11 @@ class ArduPilotExportTests(unittest.TestCase):
 
     def test_test_mode_clips_field_and_limits_drones(self):
         out = tempfile.mkdtemp()
-        summary = ap.main([FIELD, "--test", "--drones", "2", "--out", out])
+        summary = ap.main([FIELD, "--test", "--drones", "2", "--test-size", "80", "--out", out])
         self.assertEqual(len(summary["missions"]), 2)
         self.assertLessEqual(summary["areaHa"], .64 + 1e-6)
+        whole = ap.main([FIELD, "--test", "--out", tempfile.mkdtemp()])
+        self.assertGreater(whole["areaHa"], 13)  # --test alone flies the whole field
         with self.assertRaises(SystemExit):
             ap.parse([FIELD, "--test", "--drones", "3"])
         with self.assertRaises(SystemExit):
@@ -140,7 +142,7 @@ class ArduPilotExportTests(unittest.TestCase):
                           open(os.path.join(out, entry["file"].replace(".waypoints", ".param"))) if line[0] != "#")
             self.assertEqual(values["FENCE_ALT_MAX"], "60")
             self.assertEqual(values["FENCE_ACTION"], "1")
-            self.assertEqual(values["FENCE_TYPE"], "3")
+            self.assertEqual(values["FENCE_TYPE"], "7")  # altitude + circle + boundary polygon
         self.assertEqual(summary["nadirCoveragePct"], 100.0)
         with self.assertRaises(SystemExit):
             ap.parse([FIELD, "--drones", "3", "--RTLheight", "20"])
@@ -163,8 +165,41 @@ class ArduPilotExportTests(unittest.TestCase):
             sim.terminate()
         log = sim.communicate(timeout=5)[0]
         self.assertIn("stored", log)
+        self.assertEqual(log.count("mission items"), 1)  # fence must not replace the mission
         self.assertIn("FENCE_ALT_MAX = 25", log)
         self.assertIn("FENCE_ACTION = 1", log)
+        self.assertIn("fence items", log)
+
+    def test_boundary_fence_contains_path_and_follows_field(self):
+        from shapely.geometry import Point, Polygon
+        out = tempfile.mkdtemp()
+        summary = ap.main([FIELD, "--drones", "3", "--home", "77.1929", "28.5466", "--out", out])
+        info = summary["boundaryFence"]
+        self.assertEqual(info["bufferM"], 5.)
+        frame = ap.LocalFrame(28.5466, 77.1929)
+        fence = []
+        with open(os.path.join(out, "field_fence.poly")) as handle:
+            for line in handle:
+                if line[0] != "#":
+                    lat, lon = map(float, line.split())
+                    fence.append((lon, lat))
+        fence_poly = Polygon(frame.to_en(np.array(fence)))
+        _, ring = ap.read_kml(FIELD)
+        field_poly = Polygon(frame.to_en(np.array(ring)))
+        self.assertTrue(fence_poly.contains(field_poly))                       # whole field inside the fence
+        self.assertLess(fence_poly.area, field_poly.buffer(10).area * 1.05)    # but hugs it
+        self.assertTrue(fence_poly.contains(Point(0, 0)))                      # home (take-off / landing) inside
+        for entry in summary["missions"]:
+            values = dict(l.strip().split(",") for l in open(os.path.join(out, entry["file"].replace(".waypoints", ".param"))) if l[0] != "#")
+            self.assertEqual(int(values["FENCE_TYPE"]) & ap.FENCE_TYPE_POLYGON, ap.FENCE_TYPE_POLYGON)
+            for i in ap.read_waypoints(os.path.join(out, entry["file"])):
+                if i.command == ap.MAV_CMD_NAV_WAYPOINT and i.lat:
+                    self.assertTrue(fence_poly.contains(Point(*frame.to_en(np.array([[i.lon, i.lat]]))[0])))
+        items = ap.read_waypoints(os.path.join(out, "field_fence.waypoints"))
+        self.assertTrue(all(i.command == ap.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION for i in items))
+        self.assertTrue(all(int(i.params[0]) == len(items) for i in items))
+        off = ap.main([FIELD, "--drones", "2", "--no-boundary-fence", "--out", tempfile.mkdtemp()])
+        self.assertIsNone(off["boundaryFence"])
 
 
 if __name__ == "__main__":

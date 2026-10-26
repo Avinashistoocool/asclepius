@@ -60,7 +60,7 @@ overridden, for example with `--max-alt 40`:
 | Max speed | 8 m/s | **3 m/s** |
 | Altitude stagger between drones | 5 m | **8 m** |
 | Separation warning | 5 m | **8 m** |
-| Area | whole field | **`--test-size` square (default 80 m)** around `--home`, or the field centre |
+| Area | whole field | **whole field** (optional `--test-size M` square around `--home`) |
 | Output | `missions/` | **`missions_test/`**, files prefixed `TEST_` |
 | Upload | immediate | **checklist and a `y/N` prompt** (skip it with `--yes`) |
 
@@ -91,6 +91,7 @@ Output in `missions/`:
 | --- | --- |
 | `field_drone01.waypoints` … | One mission per drone (`QGC WPL 110`). Load it in Mission Planner with *Flight Plan → Load WP File* |
 | `field_plan.kml` | Open in Google Earth to check every path in 3D before flying |
+| `field_fence.waypoints`, `field_fence.poly` | Boundary inclusion fence (KML edge + `--fence-buffer`). Breach ? RTL |
 | `field_drone01.param` ? | Suggested `RTL_ALT` (different for each drone), `RTL_ALT_FINAL`, and geofence (`FENCE_*`, action RTL) |
 | `field_summary.json` | Required altitude, coverage at the flown altitudes, mission time, closest approach between drones, and per-drone length and photo count |
 
@@ -135,6 +136,9 @@ Output in `missions/`:
 | `--home LON LAT` | centroid | Launch point: item 0, fence centre, test square |
 | `--RTLheight M` | off | **Height failsafe:** sets `FENCE_ALT_MAX=M` with action RTL, so a drone above M m returns home. Survey and RTL altitudes are kept below M. Pushed to the drone with `--connect` |
 | `--only N` / `--only middle` | | Fly only path N of a `--drones K` plan, with one drone. Paths are numbered from one edge of the drone line to the other |
+| `--fence-buffer M` | 5 m | The boundary inclusion fence sits M metres outside the KML edge. Crossing it triggers RTL |
+| `--no-boundary-fence` | | Do not create or upload the boundary fence |
+| `--test-size M` | off | Fly only an M-metre square of the field around `--home` |
 | `--no-params` | | With `--connect`, upload the mission without the RTL/fence parameters |
 | `--rtl-alt` | survey max + `--rtl-margin` | RTL altitude for drone 1. Each further drone adds `--alt-stagger` |
 | `--rtl-margin`, `--fence-margin` | 5 m, 30 m | Extra height above the survey for RTL; extra distance beyond the farthest waypoint for the fence |
