@@ -136,6 +136,8 @@ Output in `missions/`:
 | `--home LON LAT` | centroid | Launch point: item 0, fence centre, test square |
 | `--RTLheight M` | off | **Height failsafe:** sets `FENCE_ALT_MAX=M` with action RTL, so a drone above M m returns home. Survey and RTL altitudes are kept below M. Pushed to the drone with `--connect` |
 | `--only N` / `--only middle` | | Fly only path N of a `--drones K` plan, with one drone. Paths are numbered from one edge of the drone line to the other |
+| `--smooth spline\|straight` | spline | `spline`: survey legs use `NAV_SPLINE_WAYPOINT`, so the copter flies one smooth curve through them. `straight`: plain waypoints |
+| `--min-spacing M` | 5 m | Minimum distance between survey waypoints. Closer points make splines kink and the copter jerk |
 | `--fence-buffer M` | 5 m | The boundary inclusion fence sits M metres outside the KML edge. Crossing it triggers RTL |
 | `--no-boundary-fence` | | Do not create or upload the boundary fence |
 | `--test-size M` | off | Fly only an M-metre square of the field around `--home` |

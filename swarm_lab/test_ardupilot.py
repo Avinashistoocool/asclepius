@@ -41,7 +41,7 @@ class ArduPilotExportTests(unittest.TestCase):
             last_trigger = [i for i in items if i.command == ap.MAV_CMD_DO_SET_CAM_TRIGG_DIST][-1]
             self.assertEqual(last_trigger.params[0], 0.)  # camera off before RTL
             for item in items:
-                if item.command == ap.MAV_CMD_NAV_WAYPOINT and item.frame == ap.MAV_FRAME_GLOBAL_RELATIVE_ALT:
+                if item.command in ap.NAV_COMMANDS and item.frame == ap.MAV_FRAME_GLOBAL_RELATIVE_ALT:
                     self.assertGreaterEqual(item.alt, 15. - 1e-6)
                     self.assertLessEqual(item.alt, 120. + 1e-6)
                     self.assertTrue(28.5 < item.lat < 28.6 and 77.1 < item.lon < 77.2)
@@ -58,11 +58,21 @@ class ArduPilotExportTests(unittest.TestCase):
             self.assertTrue(summary["capped"])
             self.assertLess(summary["nadirCoveragePct"], 100.0)
 
+    def test_spline_survey_legs(self):
+        items = ap.read_waypoints(os.path.join(self.out, self.summary["missions"][0]["file"]))
+        nav = [i.command for i in items if i.command in ap.NAV_COMMANDS and i.lat]
+        self.assertEqual(nav[0], ap.MAV_CMD_NAV_WAYPOINT)              # straight transit to the start
+        self.assertIn(ap.MAV_CMD_NAV_SPLINE_WAYPOINT, nav[1:])          # smooth curve along the survey
+        out = tempfile.mkdtemp()
+        straight = ap.main([FIELD, "--drones", "2", "--smooth", "straight", "--out", out])
+        items = ap.read_waypoints(os.path.join(out, straight["missions"][0]["file"]))
+        self.assertNotIn(ap.MAV_CMD_NAV_SPLINE_WAYPOINT, [i.command for i in items])
+
     def test_trigger_distance_matches_footprint(self):
         tan_y = math.tan(math.radians(62.22) / 2)
         items = ap.read_waypoints(os.path.join(self.out, self.summary["missions"][0]["file"]))
         triggers = [i.params[0] for i in items if i.command == ap.MAV_CMD_DO_SET_CAM_TRIGG_DIST and i.params[0] > 0]
-        alts = [i.alt for i in items if i.command == ap.MAV_CMD_NAV_WAYPOINT and i.alt > 0]
+        alts = [i.alt for i in items if i.command in ap.NAV_COMMANDS and i.alt > 0]
         self.assertLessEqual(max(triggers), 2 * max(alts) * tan_y * (1 - .3) + .1)
 
     def test_test_mode_single_drone_square_at_home(self):
@@ -193,7 +203,7 @@ class ArduPilotExportTests(unittest.TestCase):
             values = dict(l.strip().split(",") for l in open(os.path.join(out, entry["file"].replace(".waypoints", ".param"))) if l[0] != "#")
             self.assertEqual(int(values["FENCE_TYPE"]) & ap.FENCE_TYPE_POLYGON, ap.FENCE_TYPE_POLYGON)
             for i in ap.read_waypoints(os.path.join(out, entry["file"])):
-                if i.command == ap.MAV_CMD_NAV_WAYPOINT and i.lat:
+                if i.command in ap.NAV_COMMANDS and i.lat:
                     self.assertTrue(fence_poly.contains(Point(*frame.to_en(np.array([[i.lon, i.lat]]))[0])))
         items = ap.read_waypoints(os.path.join(out, "field_fence.waypoints"))
         self.assertTrue(all(i.command == ap.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION for i in items))

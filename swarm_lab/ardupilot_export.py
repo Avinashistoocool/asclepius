@@ -59,6 +59,8 @@ MAV_FRAME_GLOBAL = 0
 MAV_FRAME_MISSION = 2
 MAV_FRAME_GLOBAL_RELATIVE_ALT = 3
 MAV_CMD_NAV_WAYPOINT = 16
+MAV_CMD_NAV_SPLINE_WAYPOINT = 82
+NAV_COMMANDS = (MAV_CMD_NAV_WAYPOINT, MAV_CMD_NAV_SPLINE_WAYPOINT)
 MAV_CMD_NAV_RETURN_TO_LAUNCH = 20
 MAV_CMD_NAV_TAKEOFF = 22
 MAV_CMD_DO_CHANGE_SPEED = 178
@@ -320,18 +322,33 @@ def build_mission(index, lonlat, alt, seconds, args, home):
             items.append(MissionItem(MAV_CMD_DO_SET_CAM_TRIGG_DIST, MAV_FRAME_MISSION, params=(distance, 0., 1., 0.)))
             last_trigger = distance
 
-    def waypoint(i, altitude):
+    def waypoint(i, altitude, curve=False):
         lon, lat = lonlat[i]
-        items.append(MissionItem(MAV_CMD_NAV_WAYPOINT, params=(0., args.accept_radius, 0., float("nan")),
-                                 lat=float(lat), lon=float(lon), alt=round(float(altitude), 2)))
+        if curve:
+            # ArduCopter flies a smooth spline through consecutive spline waypoints (no stop, no sharp corner).
+            items.append(MissionItem(MAV_CMD_NAV_SPLINE_WAYPOINT, params=(0., 0., 0., 0.),
+                                     lat=float(lat), lon=float(lon), alt=round(float(altitude), 2)))
+        else:
+            items.append(MissionItem(MAV_CMD_NAV_WAYPOINT, params=(0., args.accept_radius, 0., float("nan")),
+                                     lat=float(lat), lon=float(lon), alt=round(float(altitude), 2)))
         flown.append((lon, lat, altitude))
 
     for r, run in enumerate(runs):
         keep = _simplify_run(en[run], alt[run], args.path_tolerance, args.alt_tolerance)
+        # Waypoints closer than --min-spacing make splines kink and the copter jerk; drop the in-between ones.
+        if len(keep) > 2:
+            spaced = [keep[0]]
+            for k in keep[1:-1]:
+                if np.linalg.norm(en[run[k]] - en[run[spaced[-1]]]) >= args.min_spacing:
+                    spaced.append(k)
+            if len(spaced) > 1 and np.linalg.norm(en[run[keep[-1]]] - en[run[spaced[-1]]]) < args.min_spacing:
+                spaced.pop()
+            keep = np.array(spaced + [keep[-1]])
         if r:
             set_trigger(0.)
             mission.transits += 1
         set_speed(args.speed)
+        # First point of each run is a straight leg (transit from home or between pieces); the survey is curved.
         waypoint(run[keep[0]], alt[run[keep[0]]])
         for a, b in zip(keep[:-1], keep[1:]):
             span = run[a:b + 1]
@@ -347,7 +364,7 @@ def build_mission(index, lonlat, alt, seconds, args, home):
             footprint_along = 2 * segment_alt * tan_y
             set_trigger(max(footprint_along * (1 - args.front_overlap), .5))
             mission.photos += int(length / max(last_trigger, .5)) + 1
-            waypoint(run[b], segment_alt)
+            waypoint(run[b], segment_alt, curve=args.smooth == "spline")
     set_trigger(0.)
     items.append(MissionItem(MAV_CMD_NAV_RETURN_TO_LAUNCH, MAV_FRAME_MISSION))
     mission.waypoints = np.asarray(flown)
@@ -815,6 +832,12 @@ def parse(argv=None):
     p.add_argument("--no-sync", dest="sync", action="store_false",
                    help="Fly every drone at --speed instead of keeping the formation line in sync")
     p.add_argument("--accept-radius", type=float, default=2., help="Waypoint acceptance radius, metres")
+    p.add_argument("--smooth", choices=["spline", "straight"], default="spline",
+                   help="spline: survey legs are MAV_CMD_NAV_SPLINE_WAYPOINT, so the copter flies a smooth curve "
+                        "through them (default). straight: plain waypoints (corners rounded only by WPNAV_RADIUS)")
+    p.add_argument("--min-spacing", type=float, default=5., metavar="M",
+                   help="Minimum distance between survey waypoints, metres (default 5). Closer points make "
+                        "splines kink")
     p.add_argument("--path-tolerance", type=float, default=1., help="Path simplification tolerance, metres")
     p.add_argument("--alt-tolerance", type=float, default=1., help="Altitude simplification tolerance, metres")
     p.add_argument("--jump-m", type=float, default=None,
