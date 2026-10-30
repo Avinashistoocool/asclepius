@@ -3,7 +3,8 @@ message: "If you use Asclepius in research or a report, please cite it as below.
 title: "Asclepius: coverage planning, flight export and detection for the NIDAR RescueSwarm drone swarm"
 type: software
 authors:
-  - given-names: Avinash
+  - given-names: Avinash Chandra
+    family-names: Gupta
     alias: Avinashistoocool
   - name: Team Asclepius
 version: 1.0.0
@@ -28,7 +29,8 @@ preferred-citation:
   type: report
   title: "Chord-Bisecting Trajectories and Arrival-Time Sweeps for Nadir-Camera Drone Swarms"
   authors:
-    - given-names: Avinash
+    - given-names: Avinash Chandra
+      family-names: Gupta
       alias: Avinashistoocool
     - name: Team Asclepius
   institution:
