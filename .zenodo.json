@@ -1,0 +1,49 @@
+{
+  "title": "Asclepius: coverage planning, flight export and detection for the NIDAR RescueSwarm drone swarm",
+  "upload_type": "software",
+  "version": "1.0.0",
+  "publication_date": "2026-10-30",
+  "description": "<p>Asclepius is the software stack of Team Asclepius for the NIDAR RescueSwarm search-and-rescue challenge. It plans full nadir-camera coverage of arbitrary, non-convex fields for a drone swarm by modelling every sweep as an arrival-time field (medial-axis chord, lawnmower, harmonic and geodesic planners), assigns each drone its area, path, heading and altitude, and verifies that every ground cell is imaged. Plans are exported as ArduCopter missions with synchronised speeds, distance-triggered cameras, inclusion fences and RTL failsafes, and uploaded over MAVLink with read-back verification. The repository also contains a browser port of the planner, a fleet and delivery-dispatch simulation, and YOLO-World open-vocabulary person detection.</p><p>Documentation: <a href=\"https://avinashistoocool.github.io/asclepius/\">avinashistoocool.github.io/asclepius</a>. Papers: <a href=\"https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf\">coverage theory</a>, <a href=\"https://avinashistoocool.github.io/asclepius/papers/Asclepius_Technical_Report.pdf\">technical report</a>.</p>",
+  "creators": [
+    {
+      "name": "Avinash"
+    },
+    {
+      "name": "Team Asclepius"
+    }
+  ],
+  "keywords": [
+    "drone swarm",
+    "UAV",
+    "coverage path planning",
+    "search and rescue",
+    "medial axis",
+    "harmonic function",
+    "nadir camera",
+    "ArduPilot",
+    "MAVLink",
+    "YOLO-World"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/Avinashistoocool/asclepius",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://avinashistoocool.github.io/asclepius/",
+      "relation": "isDocumentedBy",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf",
+      "relation": "isDescribedBy",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://avinashistoocool.github.io/asclepius/papers/Asclepius_Technical_Report.pdf",
+      "relation": "isDocumentedBy",
+      "scheme": "url"
+    }
+  ]
+}

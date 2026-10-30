@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use Asclepius in research or a report, please cite it as below."
+title: "Asclepius: coverage planning, flight export and detection for the NIDAR RescueSwarm drone swarm"
+type: software
+authors:
+  - given-names: Avinash
+    alias: Avinashistoocool
+  - name: Team Asclepius
+version: 1.0.0
+date-released: 2026-10-30
+repository-code: "https://github.com/Avinashistoocool/asclepius"
+url: "https://avinashistoocool.github.io/asclepius/"
+abstract: >-
+  Asclepius is the software stack of Team Asclepius for the NIDAR RescueSwarm search-and-rescue challenge. It plans full nadir-camera coverage of arbitrary, non-convex fields for a drone swarm by modelling every sweep as an arrival-time field (medial-axis chord, lawnmower, harmonic and geodesic planners), assigns each drone its area, path, heading and altitude, and verifies that every ground cell is imaged. Plans are exported as ArduCopter missions with synchronised speeds, distance-triggered cameras, inclusion fences and RTL failsafes, and uploaded over MAVLink with read-back verification. The repository also contains a browser port of the planner, a fleet and delivery-dispatch simulation, and YOLO-World open-vocabulary person detection.
+keywords:
+  - drone swarm
+  - UAV
+  - coverage path planning
+  - search and rescue
+  - medial axis
+  - harmonic function
+  - nadir camera
+  - ArduPilot
+  - MAVLink
+  - YOLO-World
+preferred-citation:
+  type: report
+  title: "Chord-Bisecting Trajectories and Arrival-Time Sweeps for Nadir-Camera Drone Swarms"
+  authors:
+    - given-names: Avinash
+      alias: Avinashistoocool
+    - name: Team Asclepius
+  institution:
+    name: "Team Asclepius, NIDAR RescueSwarm"
+  year: 2026
+  url: "https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf"
+  repository-code: "https://github.com/Avinashistoocool/asclepius"

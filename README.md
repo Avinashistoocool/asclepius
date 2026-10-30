@@ -10,12 +10,23 @@ fleet management, and onboard person detection.
 | [`swarm_lab/ARDUPILOT.md`](swarm_lab/ARDUPILOT.md) | **Fly it:** KML/KMZ/.poly ? per-drone ArduCopter `.waypoints` (takeoff, synced speeds, camera trigger distance, RTL) + optional pymavlink upload with read-back |
 | `Fleet_manager.py` | Fleet/lane assignment, camera parameters, and delivery-drone dispatch |
 | `docs/` | GitHub Pages version of the comparison page. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |
-| [`paper/`](paper/) | Technical report ([LaTeX](paper/coverage_theory.tex), [Markdown](paper/coverage_theory.md)): the mathematics, the solvers that failed and why, and the method in use. Includes equation checks (`verify_derivations.py`), figures (`figures.py`) and tables (`results.py`) |
+| [`paper/`](paper/) | Coverage theory paper ([LaTeX](paper/coverage_theory.tex), [Markdown](paper/coverage_theory.md), [PDF](https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf)): the mathematics, the solvers that failed and why, and the method in use. Includes equation checks (`verify_derivations.py`), figures (`figures.py`) and tables (`results.py`). Also the software [technical report](paper/Asclepius_Technical_Report.tex) ([PDF](https://avinashistoocool.github.io/asclepius/papers/Asclepius_Technical_Report.pdf)) |
 | `NIDAR_YOLO.py` | YOLO-World open-vocabulary detection (`person`, `tree`, ...) |
 | `weights/`, `yolov8s-worldv2.pt` | Model weights (Git LFS) |
 
 **Live comparison page:** <https://avinashistoocool.github.io/asclepius/>. It runs entirely
 in your browser.
+
+## Documentation
+
+| Document | PDF | Source |
+| --- | --- | --- |
+| Planner site (interactive) | <https://avinashistoocool.github.io/asclepius/> | [`docs/`](docs/) |
+| Coverage theory paper: *Chord-Bisecting Trajectories and Arrival-Time Sweeps for Nadir-Camera Drone Swarms* | [coverage_theory.pdf](https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf) | [`paper/coverage_theory.tex`](paper/coverage_theory.tex) |
+| Technical report: software architecture, fleet management, detection, flight interfaces and safety | [Asclepius_Technical_Report.pdf](https://avinashistoocool.github.io/asclepius/papers/Asclepius_Technical_Report.pdf) | [`paper/Asclepius_Technical_Report.tex`](paper/Asclepius_Technical_Report.tex) |
+
+Both PDFs are also attached to the [GitHub releases](https://github.com/Avinashistoocool/asclepius/releases).
+To rebuild them, run `pdflatex` twice on each `.tex` file from inside `paper/`.
 
 ## Status (October 2026)
 
@@ -234,3 +245,29 @@ pipeline in the browser with no server.
 | `index.html` / `compare.html` | MAT lab UI / comparison UI |
 | `test_medial.py` | Unit tests (MAT, complexity, lane partition, 100% nadir coverage) |
 | `test_ardupilot.py` | Exporter tests (projection, mission structure, altitude cap, trigger spacing, coverage) |
+
+---
+
+## Citing
+
+If you use Asclepius or its coverage method, please cite the coverage theory paper. Citation
+metadata is in [`CITATION.cff`](CITATION.cff) (GitHub shows it under *Cite this repository*)
+and [`.zenodo.json`](.zenodo.json).
+
+```bibtex
+@techreport{asclepius2026coverage,
+  author      = {Avinash and {Team Asclepius}},
+  title       = {Chord-Bisecting Trajectories and Arrival-Time Sweeps for Nadir-Camera Drone Swarms},
+  institution = {Team Asclepius, NIDAR RescueSwarm},
+  year        = {2026},
+  url         = {https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf}
+}
+
+@software{asclepius2026,
+  author  = {Avinash and {Team Asclepius}},
+  title   = {Asclepius: coverage planning, flight export and detection for the NIDAR RescueSwarm drone swarm},
+  version = {1.0.0},
+  year    = {2026},
+  url     = {https://github.com/Avinashistoocool/asclepius}
+}
+```

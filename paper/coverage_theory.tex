@@ -25,6 +25,7 @@
 
 \captionsetup{font=small,labelfont=bf}
 \setlist{itemsep=2pt,topsep=4pt}
+\setlength{\emergencystretch}{3em}
 \numberwithin{equation}{section}
 
 \theoremstyle{plain}
@@ -57,9 +58,10 @@ The problem began as a geometric question: find a smooth trajectory such that ev
 We then report what we used to solve these equations, and why each attempt failed: spline collocation with ray-cast residuals, boundary-pair collocation with shape continuation, and direct ODE shooting. The mathematics explains every failure. Finally, we describe the method now in use. The sweep is relaxed to an arrival-time field whose level sets are the formation: medial-axis chord time, principal-axis projection, a harmonic (Dirichlet-energy) field, and a geodesic (eikonal) field. A lane partition assigns ground to drones, and a monotone altitude repair guarantees 100\% nadir coverage. Every equation is checked numerically.
 \end{abstract}
 
-\noindent\textbf{Code:} \url{https://github.com/Avinashistoocool/asclepius} \quad
+\noindent\textbf{Code:} \url{https://github.com/Avinashistoocool/asclepius}\\
 \textbf{Demo:} \url{https://avinashistoocool.github.io/asclepius/}\\
-\textbf{Reproduction:} \texttt{paper/verify\_derivations.py} (equations), \texttt{paper/figures.py} (figures), \texttt{paper/results.py} (tables).
+\textbf{Reproduction:} \texttt{paper/verify\_derivations.py} (equations),\\
+\texttt{paper/figures.py} (figures), \texttt{paper/results.py} (tables).
 
 \tableofcontents
 \newpage
@@ -88,7 +90,7 @@ $N$ drones carry nadir cameras with fields of view $(\HFOV,\VFOV)$. Find flight 
 \paragraph{Notation.} Let $p(s)$ be parametrised by arc length $s$, and let $J$ denote rotation by $+\pi/2$.
 
 \begin{center}
-\begin{tabular}{>{$}l<{$} p{11.5cm}}
+\begin{tabular}{>{$}l<{$} p{10.4cm}}
 \toprule
 T = p',\quad N = JT & unit tangent and unit normal of the trajectory \\
 \theta & angle of $N$, so $N=(\cos\theta,\sin\theta)$ and $\dd N/\dd\theta = JN = -T$ \\
@@ -133,9 +135,9 @@ Let $\phi$ be a local defining function of $\pO$ with $\nabla\phi\parallel\nu$. 
 
 Applying \eqref{eq:hit} with $n=\pm N$, decomposing $\nu_\pm$ in the frame $(T,N)$, and using $\dd N/\dd\theta=-T$ gives
 \begin{align}
-\nabla_p d_+ &= -N-\tau_+T, & \nabla_p d_- &= N-\tau_-T, &
+\nabla_p d_+ &= -N-\tau_+T, & \nabla_p d_- &= N-\tau_-T, \nonumber\\
 \partial_\theta d_+ &= d_+\tau_+, & \partial_\theta d_- &= -d_-\tau_-, \label{eq:dpm}\\[2pt]
-\nabla_p w &= -(\tau_++\tau_-)\,T, & \nabla_p e &= -N-\tfrac12(\tau_+-\tau_-)\,T, &
+\nabla_p w &= -(\tau_++\tau_-)\,T, & \nabla_p e &= -N-\tfrac12(\tau_+-\tau_-)\,T, \nonumber\\
 \partial_\theta e &= \tfrac12\bigl(d_+\tau_+ + d_-\tau_-\bigr). \label{eq:we}
 \end{align}
 
@@ -338,7 +340,7 @@ r_i = e\bigl(p(t_i),\theta(t_i)\bigr) = \tfrac12\bigl(d_+-d_-\bigr)=0,
 \end{equation}
 together with the endpoint residuals $20\cdot\operatorname{dist}\bigl(p(0),\pO\bigr)$ and $20\cdot\operatorname{dist}\bigl(p(1),\pO\bigr)$.
 
-\paragraph{Solver.} Bounded nonlinear least squares (trust-region reflective, \texttt{scipy.optimize.least\_squares}, \citealp{virtanen2020}) with an \emph{analytic} Jacobian. The Jacobian comes from Lemma~\ref{lem:hit}, applied edge by edge as ray--segment intersection derivatives. The solver was limited to 180 evaluations, with an 18\,s budget over all charts and endpoint seeds.
+\paragraph{Solver.} Bounded nonlinear least squares (trust-region reflective, \texttt{scipy.optimize.\allowbreak least\_squares}, \citealp{virtanen2020}) with an \emph{analytic} Jacobian. The Jacobian comes from Lemma~\ref{lem:hit}, applied edge by edge as ray--segment intersection derivatives. The solver was limited to 180 evaluations, with an 18\,s budget over all charts and endpoint seeds.
 
 \paragraph{Acceptance tests.} The endpoint distance must be at most $10^{-5}$. The maximum $|e|$ over 3074 off-grid samples must not exceed the tolerance (0.01 to 1 unit). Each B\'ezier piece must lie inside the polygon, which is checked by subdivision and convex-hull tests.
 
