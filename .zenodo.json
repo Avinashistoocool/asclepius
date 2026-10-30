@@ -45,5 +45,6 @@
       "relation": "isDocumentedBy",
       "scheme": "url"
     }
-  ]
+  ],
+  "license": "MIT"
 }

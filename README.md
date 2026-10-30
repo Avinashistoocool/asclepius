@@ -271,3 +271,11 @@ and [`.zenodo.json`](.zenodo.json).
   url     = {https://github.com/Avinashistoocool/asclepius}
 }
 ```
+
+## License
+
+The code in this repository is MIT licensed. See [`LICENSE`](LICENSE).
+
+The YOLO-World weights (`yolov8s-worldv2.pt`, `weights/`) are Ultralytics models distributed under
+[AGPL-3.0](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). The MIT license does not cover them, and
+using them is subject to AGPL-3.0 (or an Ultralytics enterprise license).
