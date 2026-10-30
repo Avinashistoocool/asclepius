@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Asclepius / Swarm Telemetry</title>
+<link rel="stylesheet" href="/leaflet/leaflet.css">
+<style>
+:root{color-scheme:dark;--shell:#000;--surface:#0c0c0c;--lime:#ccff00;--emerald:#10b981;--amber:#ffb020;--red:#ff4d4d;
+  --text:#ebebeb;--text2:rgba(235,235,235,.6);--text3:rgba(235,235,235,.3);--glass:rgba(255,255,255,.03);
+  --line:rgba(255,255,255,.1);--mono:"JetBrains Mono",ui-monospace,Consolas,monospace;--sans:"Space Grotesk",system-ui,sans-serif}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--shell);color:var(--text);font:400 13px/1.45 var(--sans);display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{font-weight:700;letter-spacing:.02em}.brand b{color:var(--lime)}
+.pill{font:500 11px var(--mono);padding:3px 9px;border-radius:99px;border:1px solid var(--line);background:var(--glass);color:var(--text2)}
+.pill.ok{color:var(--emerald);border-color:rgba(16,185,129,.4)}.pill.bad{color:var(--red);border-color:rgba(255,77,77,.5)}
+.spacer{flex:1}
+button{font:600 12px var(--sans);border-radius:10px;border:1px solid var(--line);background:#141414;color:var(--text);padding:6px 12px;cursor:pointer}
+button:hover{border-color:var(--lime)}button.rtl{background:var(--lime);color:#000;border-color:var(--lime)}
+button.warnb{border-color:rgba(255,176,32,.5);color:var(--amber)}
+#banner{display:none;padding:8px 16px;font-weight:600;background:rgba(255,77,77,.14);border-bottom:1px solid rgba(255,77,77,.5);color:#ffb3b3}
+#banner.show{display:block}
+main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 430px;min-height:0}
+#left{display:grid;grid-template-rows:minmax(0,1fr) 210px;min-height:0;border-right:1px solid var(--line)}
+#map{background:#0a0a0a}
+#bottom{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);border-top:1px solid var(--line);min-height:0}
+#chartbox{padding:8px 12px;border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0}
+#chart{flex:1;width:100%;min-height:0}
+#log{overflow:auto;padding:8px 12px;font:11px/1.6 var(--mono)}
+#log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crit{color:var(--red)}.warn{color:var(--amber)}.ok{color:var(--emerald)}.info{color:var(--text2)}
+#cards{overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+.card{border:1px solid var(--line);border-radius:18px;background:var(--glass);padding:12px 14px;cursor:pointer}
+.card.sel{border-color:var(--lime)}.card.lvl-crit{box-shadow:0 0 0 1px var(--red) inset}.card.lvl-warn{box-shadow:0 0 0 1px rgba(255,176,32,.6) inset}
+.card.stale{opacity:.55}
+.top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.dot{width:10px;height:10px;border-radius:50%}
+.name{font-weight:700;font-size:15px}.mode{font:700 12px var(--mono);color:var(--lime)}
+.armed{font:700 11px var(--mono);padding:1px 7px;border-radius:6px;background:var(--red);color:#000}
+.disarmed{font:700 11px var(--mono);padding:1px 7px;border-radius:6px;background:#222;color:var(--text2)}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px 10px}
+.k{font:10px var(--mono);color:var(--text3);text-transform:uppercase;letter-spacing:.06em}
+.v{font:600 13px var(--mono)}
+.bar{height:5px;border-radius:3px;background:#222;margin-top:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--lime)}
+.alerts{margin-top:8px;display:flex;flex-direction:column;gap:3px;font-size:12px}
+.acts{display:flex;gap:6px;margin-top:10px}
+.acts button{flex:1;padding:5px 6px}
+.empty{color:var(--text2);padding:30px 10px;text-align:center;line-height:1.7}
+.leaflet-container{background:#0a0a0a;font-family:var(--sans)}
+.dlabel{font:700 11px var(--mono);color:#000;border-radius:6px;padding:0 4px;white-space:nowrap}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">ASCLEPIUS <b>/</b> SWARM TELEMETRY</div>
+  <span id="links"></span>
+  <span class="pill" id="clock">--</span>
+  <div class="spacer"></div>
+  <label class="pill"><input type="checkbox" id="sound" checked> sound</label>
+  <label class="pill"><input type="checkbox" id="follow"> follow</label>
+  <span id="global"><button class="warnb" data-all="LOITER">LOITER ALL</button> <button class="rtl" data-all="RTL">RTL ALL</button></span>
+</header>
+<div id="banner"></div>
+<main>
+  <div id="left">
+    <div id="map"></div>
+    <div id="bottom">
+      <div id="chartbox"><div class="k" id="charttitle">altitude (m, lime) &amp; battery (V, amber) - last 5 min</div><canvas id="chart"></canvas></div>
+      <div id="log"></div>
+    </div>
+  </div>
+  <div id="cards"><div class="empty">Waiting for MAVLink heartbeats...<br>Check the link pills above, SYSID_THISMAV, and that Mission Planner is forwarding.</div></div>
+</main>
+<script src="/leaflet/leaflet.js"></script>
+<script>
+const COLORS = ["#ccff00", "#38bdf8", "#f472b6", "#fb923c", "#a78bfa", "#34d399", "#facc15", "#f87171"];
+const colorOf = id => COLORS[(id - 1) % COLORS.length];
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 1, u = "") => v === null || v === undefined ? "--" : (+v).toFixed(d) + u;
+const FIX = ["none", "none", "2D", "3D", "DGPS", "RTK float", "RTK fix"];
+let pressing = false;
+addEventListener("pointerdown", () => pressing = true); addEventListener("pointerup", () => setTimeout(() => pressing = false, 50));
+let state = null, selected = null, readOnly = false, fitted = false, lastCrit = new Set();
+
+const map = L.map("map", {zoomControl: true, attributionControl: true}).setView([28.5466, 77.193], 17);
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 21, maxNativeZoom: 19, attribution: "OSM"});
+const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  {maxZoom: 21, maxNativeZoom: 19, attribution: "Esri"}).addTo(map);
+L.control.layers({"Satellite": sat, "Streets": osm, "None (offline)": L.layerGroup()}).addTo(map);
+L.control.scale({imperial: false}).addTo(map);
+const layers = {};   // sysid -> {marker, track, home, label}
+
+fetch("/api/plan").then(r => r.json()).then(plan => {
+  const bounds = [];
+  if (plan.field) { L.polygon(plan.field, {color: "#fff", weight: 2, fillOpacity: .05}).addTo(map); bounds.push(...plan.field); }
+  if (plan.fence) { L.polygon(plan.fence, {color: "#ff4d4d", weight: 2, dashArray: "6 6", fill: false}).bindTooltip("geofence (exit = RTL)").addTo(map); bounds.push(...plan.fence); }
+  for (const p of plan.paths) {
+    const pts = p.points.map(q => [q[0], q[1]]);
+    if (pts.length) { L.polyline(pts, {color: colorOf(p.sysid), weight: 2, opacity: .45, dashArray: "4 6"}).bindTooltip(`plan: ${p.file}`).addTo(map); bounds.push(...pts); }
+  }
+  if (bounds.length) { map.fitBounds(bounds, {padding: [30, 30]}); fitted = true; }
+});
+
+function icon(s) {
+  const c = colorOf(s.sysid), h = s.heading || 0;
+  return L.divIcon({className: "", iconSize: [34, 34], iconAnchor: [17, 17], html:
+    `<svg width="34" height="34" viewBox="-17 -17 34 34" style="transform:rotate(${h}deg)"><path d="M0,-14 L9,10 L0,5 L-9,10 Z" fill="${c}" stroke="#000" stroke-width="1.5"/></svg>`});
+}
+
+function drawMap(drones) {
+  for (const s of drones) {
+    if (s.lat === null || (s.lat === 0 && s.lon === 0)) continue;
+    let l = layers[s.sysid];
+    if (!l) {
+      l = layers[s.sysid] = {
+        track: L.polyline([], {color: colorOf(s.sysid), weight: 3}).addTo(map),
+        marker: L.marker([s.lat, s.lon], {icon: icon(s)}).addTo(map).on("click", () => select(s.sysid)),
+        home: null};
+      l.marker.bindTooltip("", {permanent: true, direction: "right", offset: [12, 0], className: "dlabel"});
+      if (!fitted) { map.setView([s.lat, s.lon], 18); fitted = true; }
+    }
+    l.marker.setLatLng([s.lat, s.lon]).setIcon(icon(s));
+    l.marker.setTooltipContent(`<span style="background:${colorOf(s.sysid)};padding:0 4px;border-radius:4px">${s.sysid} ${fmt(s.altRel, 1)}m</span>`);
+    l.track.setLatLngs(s.track.map(p => [p[0], p[1]]));
+    if (s.home && !l.home) l.home = L.circleMarker([s.home.lat, s.home.lon], {radius: 6, color: colorOf(s.sysid), fillOpacity: .2}).bindTooltip(`H${s.sysid}`).addTo(map);
+  }
+  if ($("follow").checked) {
+    const pts = drones.filter(s => s.lat !== null && s.lat !== 0).map(s => [s.lat, s.lon]);
+    if (pts.length === 1) map.panTo(pts[0]); else if (pts.length > 1) map.fitBounds(pts, {padding: [80, 80], maxZoom: 19});
+  }
+}
+
+function worst(s) { return s.alerts.some(a => a.level === "crit") ? "crit" : s.alerts.some(a => a.level === "warn") ? "warn" : ""; }
+
+function card(s) {
+  const cell = s.cellV, pct = s.remaining, wp = s.wpSeq !== null ? `${s.wpSeq}/${s.wpTotal ?? "?"}` : "--";
+  const vibe = s.vibe ? Math.max(...s.vibe).toFixed(0) : "--";
+  const ekf = s.ekf ? Math.max(s.ekf.vel, s.ekf.posH, s.ekf.posV, s.ekf.compass).toFixed(2) : "--";
+  const t = s.flightS ? `${Math.floor(s.flightS / 60)}:${String(s.flightS % 60).padStart(2, "0")}` : "--";
+  const stale = s.heartbeatAge === null || s.heartbeatAge > 3;
+  const cells = [
+    ["alt rel", fmt(s.altRel, 1, " m")], ["climb", fmt(s.climb, 1, " m/s")], ["speed", fmt(s.groundSpeed, 1, " m/s")], ["throttle", s.throttle === null ? "--" : s.throttle + "%"],
+    ["battery", fmt(s.voltage, 2, " V")], ["per cell", fmt(cell, 2, " V")], ["current", fmt(s.current, 1, " A")], ["used", s.consumedMah === null ? "--" : Math.round(s.consumedMah) + " mAh"],
+    ["gps", `${FIX[s.gpsFix] ?? "--"} ${s.sats ?? ""}`], ["hdop", fmt(s.hdop, 1)], ["ekf var", ekf], ["vibe", vibe],
+    ["waypoint", wp], ["to wp", fmt(s.wpDist, 0, " m")], ["alt err", fmt(s.altError, 1, " m")], ["home", fmt(s.homeDist, 0, " m")],
+    ["roll/pitch", s.roll === null ? "--" : `${s.roll.toFixed(0)}/${s.pitch.toFixed(0)}`], ["heading", fmt(s.heading, 0, "\u00b0")], ["flight", t], ["link", stale ? "LOST " + fmt(s.heartbeatAge, 0, "s") : fmt(s.heartbeatAge, 1, "s")],
+  ];
+  const progress = s.wpSeq !== null && s.wpTotal ? Math.min(100, 100 * s.wpSeq / Math.max(1, s.wpTotal - 1)) : 0;
+  const acts = readOnly ? "" : `<div class="acts">${state.commands.map(c => `<button class="${c === "RTL" ? "rtl" : ""}" data-id="${s.sysid}" data-act="${c}">${c}</button>`).join("")}</div>`;
+  return `<div class="card ${selected === s.sysid ? "sel" : ""} lvl-${worst(s)} ${stale ? "stale" : ""}" data-card="${s.sysid}">
+    <div class="top"><span class="dot" style="background:${colorOf(s.sysid)}"></span><span class="name">Drone ${s.sysid}</span>
+      <span class="mode">${s.mode}</span><span class="${s.armed ? "armed" : "disarmed"}">${s.armed ? "ARMED" : "SAFE"}</span>
+      <span class="spacer"></span><span class="k">link ${s.link + 1}${pct !== null ? " · " + pct + "%" : ""}</span></div>
+    <div class="grid">${cells.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>
+    <div class="bar" title="mission progress"><i style="width:${progress}%"></i></div>
+    <div class="alerts">${s.alerts.map(a => `<div class="${a.level}">\u25b2 ${escapeHtml(a.text)}</div>`).join("") || '<div class="ok">\u2713 nominal</div>'}</div>
+    ${acts}</div>`;
+}
+
+function escapeHtml(t) { return String(t).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
+
+function select(id) { selected = id; render(); }
+
+function render() {
+  if (!state) return;
+  const ds = state.drones;
+  if (selected === null && ds.length) selected = ds[0].sysid;
+  if (ds.length && !pressing) $("cards").innerHTML = ds.map(card).join("");  // don't swap buttons mid-click
+  $("links").innerHTML = state.links.map((l, i) => {
+    const ok = l.age !== null && l.age < 3 && !l.error;
+    return `<span class="pill ${ok ? "ok" : "bad"}" title="${escapeHtml(l.error || "")}">L${i + 1} ${escapeHtml(l.url)} ${ok ? l.packets + " pkts" : (l.error ? "error" : "no data")}</span>`;
+  }).join(" ");
+  $("clock").textContent = new Date(state.t * 1000).toLocaleTimeString();
+  $("global").style.display = readOnly ? "none" : "";
+  const crit = ds.flatMap(s => s.alerts.filter(a => a.level === "crit").map(a => `D${s.sysid}: ${a.text}`));
+  $("banner").className = crit.length ? "show" : ""; $("banner").textContent = crit.join("   |   ");
+  const now = new Set(crit);
+  if ($("sound").checked && [...now].some(c => !lastCrit.has(c))) beep();
+  lastCrit = now;
+  $("log").innerHTML = state.events.slice().reverse().map(e =>
+    `<div class="${e.level}">${new Date(e.t * 1000).toLocaleTimeString()} D${e.sysid} ${escapeHtml(e.text)}</div>`).join("");
+  drawMap(ds);
+  drawChart(ds.find(s => s.sysid === selected));
+}
+
+function drawChart(s) {
+  const c = $("chart"), r = c.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  c.width = r.width * dpr; c.height = r.height * dpr;
+  const g = c.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, r.width, r.height);
+  if (!s || s.history.length < 2) return;
+  $("charttitle").textContent = `drone ${s.sysid}: altitude (m, lime) & battery (V, amber), last ${Math.round((s.history.at(-1)[0] - s.history[0][0]) / 60)} min`;
+  const t0 = s.history[0][0], t1 = s.history.at(-1)[0], W = r.width - 40, H = r.height - 14;
+  const series = (idx, color, axisRight) => {
+    const vals = s.history.map(h => h[idx]).filter(v => v !== null);
+    if (!vals.length) return;
+    let lo = Math.min(...vals), hi = Math.max(...vals); if (hi - lo < 1) { hi += .5; lo -= .5; }
+    g.strokeStyle = color; g.lineWidth = 1.6; g.beginPath(); let started = false;
+    for (const h of s.history) { if (h[idx] === null) continue;
+      const x = 30 + W * (h[0] - t0) / Math.max(1, t1 - t0), y = 6 + H * (1 - (h[idx] - lo) / (hi - lo));
+      started ? g.lineTo(x, y) : g.moveTo(x, y); started = true; }
+    g.stroke(); g.fillStyle = color; g.font = "10px monospace";
+    g.fillText(hi.toFixed(1), axisRight ? W + 32 : 0, 12); g.fillText(lo.toFixed(1), axisRight ? W + 32 : 0, H + 6);
+  };
+  series(1, "#ccff00", false); series(2, "#ffb020", true);
+}
+
+let audio = null;
+function beep() {
+  try { audio = audio || new AudioContext(); const o = audio.createOscillator(), v = audio.createGain();
+    o.frequency.value = 880; v.gain.value = .15; o.connect(v); v.connect(audio.destination); o.start(); o.stop(audio.currentTime + .35);
+  } catch (e) {}
+}
+
+async function send(target, action) {
+  const who = target === "all" ? "ALL drones" : `drone ${target}`;
+  if (!confirm(`Send ${action} to ${who}?`)) return;
+  const r = await fetch("/api/command", {method: "POST", headers: {"Content-Type": "application/json", "X-Dashboard": "1"},
+    body: JSON.stringify({target, action})});
+  const j = await r.json();
+  if (!r.ok) alert(j.error); else if (!j.sent.length) alert("No drone accepted the command (no link?)");
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (b && b.dataset.all) return send("all", b.dataset.all);
+  if (b && b.dataset.act) { e.stopPropagation(); return send(b.dataset.id, b.dataset.act); }
+  const c = e.target.closest("[data-card]");
+  if (c) select(+c.dataset.card);
+});
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = e => { state = JSON.parse(e.data); readOnly = state.readOnly; render(); };
+  es.onerror = () => { $("banner").className = "show"; $("banner").textContent = "Dashboard server not reachable; retrying..."; };
+}
+connect();
+addEventListener("resize", render);
+</script>
+</body>
+</html>

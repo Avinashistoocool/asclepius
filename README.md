@@ -8,6 +8,7 @@ fleet management, and onboard person detection.
 | [`swarm_lab/`](swarm_lab/) | Coverage planner: medial axis, four sweep planners compared side by side, per-drone areas, flight paths, nadir camera plan |
 | [`swarm_lab/MANUAL.md`](swarm_lab/MANUAL.md) | **Field-to-flight manual:** draw the KML, generate missions, set up and upload to each drone, fly, and RTL |
 | [`swarm_lab/ARDUPILOT.md`](swarm_lab/ARDUPILOT.md) | **Fly it:** KML/KMZ/.poly ? per-drone ArduCopter `.waypoints` (takeoff, synced speeds, camera trigger distance, RTL) + optional pymavlink upload with read-back |
+| [`swarm_lab/DASHBOARD.md`](swarm_lab/DASHBOARD.md) | **Watch it:** live multi-drone telemetry dashboard (map, per-drone cards, alerts, RTL/LOITER buttons, tlogs) |
 | `Fleet_manager.py` | Fleet/lane assignment, camera parameters, and delivery-drone dispatch |
 | `docs/` | GitHub Pages version of the comparison page. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |
 | [`paper/`](paper/) | Coverage theory paper ([LaTeX](paper/coverage_theory.tex), [Markdown](paper/coverage_theory.md), [PDF](https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf)): the mathematics, the solvers that failed and why, and the method in use. Includes equation checks (`verify_derivations.py`), figures (`figures.py`) and tables (`results.py`). Also the software [technical report](paper/Asclepius_Technical_Report.tex) ([PDF](https://avinashistoocool.github.io/asclepius/papers/Asclepius_Technical_Report.pdf)) |
@@ -241,6 +242,7 @@ pipeline in the browser with no server.
 | `boundary.py` / `exact.py` | Polygon validation and intersections; preset shapes |
 | `server.py` | Local HTTP server with streamed progress |
 | `ardupilot_export.py` | KML/KMZ/.poly ? ArduCopter missions and MAVLink upload ([guide](swarm_lab/ARDUPILOT.md)) |
+| `dashboard.py` | Multi-drone MAVLink telemetry dashboard on http://127.0.0.1:8090 ([guide](swarm_lab/DASHBOARD.md)) |
 | `examples/` | Sample field (`field.kml`) and a fake MAVLink vehicle for upload tests |
 | `index.html` / `compare.html` | MAT lab UI / comparison UI |
 | `test_medial.py` | Unit tests (MAT, complexity, lane partition, 100% nadir coverage) |

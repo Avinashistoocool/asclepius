@@ -3,7 +3,7 @@
 This manual walks through a mission from start to finish: draw the field, generate the
 missions, check them, fly the drones, and bring every drone back home with RTL. Run the
 commands from the `swarm_lab/` folder in PowerShell. For details on every option, see
-[ARDUPILOT.md](ARDUPILOT.md).
+[ARDUPILOT.md](ARDUPILOT.md). To watch all drones in flight, see [DASHBOARD.md](DASHBOARD.md).
 
 ```
  1 Draw field (KML)  →  2 Generate missions  →  3 Check preview  →  4 SITL rehearsal
