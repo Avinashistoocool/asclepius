@@ -1,7 +1,7 @@
 # swarm_lab
 
-Coverage planning for a nadir-camera drone swarm. See the [top-level README](../README.md)
-for the full description of the algorithms, metrics, and results.
+Coverage planning for a nadir-camera drone swarm. The [top-level README](../README.md) gives
+the full description of the algorithms, metrics, and results.
 
 ```powershell
 py -m pip install -r requirements.txt
