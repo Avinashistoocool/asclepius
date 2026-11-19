@@ -70,6 +70,7 @@ nav{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;align-items:c
 .pill a{padding:8px 16px;border-radius:9999px;text-decoration:none;color:rgba(255,255,255,.7);font-size:13px;transition:all .3s var(--ease)}
 .pill a:hover{color:#000;background:var(--lime)}
 .navright{display:flex;align-items:center;gap:18px}
+.navlink{text-decoration:none;color:rgba(255,255,255,.7);font-size:13px;white-space:nowrap;transition:color .3s var(--ease)}.navlink:hover{color:var(--lime)}
 
 /* ---------- hero ---------- */
 .hero{display:grid;grid-template-columns:repeat(12,1fr);gap:32px;padding:150px 40px 80px;align-items:center}
@@ -237,7 +238,7 @@ footer{background:#000;position:relative;overflow:hidden;padding:110px 40px 36px
 @media(max-width:700px){
   body{padding:8px}nav,.hero,section.block,.contrast,footer{padding-left:20px;padding-right:20px}
   .bento,.planners{grid-template-columns:1fr}.s2,.r2{grid-column:auto;grid-row:auto}
-  .controls{grid-template-columns:1fr 1fr}.navright .tag{display:none}
+  .controls{grid-template-columns:1fr 1fr}.navright .tag,.navlink{display:none}
   .foot{grid-template-columns:1fr}.copy{justify-self:start}.fcard,.cursor{display:none}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
@@ -253,6 +254,8 @@ footer{background:#000;position:relative;overflow:hidden;padding:110px 40px 36px
       <a href="#lab">Lab</a><a href="#planners">Planners</a><a href="#shape-sec">Shape</a><a href="#method">Method</a>
     </div>
     <div class="navright">
+      <a class="navlink" href="https://avinashistoocool.github.io/">&larr; avinash</a>
+      <a class="navlink" href="https://avinashistoocool.github.io/projects/">All projects</a>
       <span class="tag" id="sysTag"><i></i><span id="sysText">System idle</span></span>
       <a class="btn white" id="repoLink" href="../README.md">Read the docs</a>
     </div>
@@ -437,6 +440,8 @@ footer{background:#000;position:relative;overflow:hidden;padding:110px 40px 36px
     </div>
     <div class="foot">
       <div class="links">
+        <a href="https://avinashistoocool.github.io/">&larr; avinash</a>
+        <a href="https://avinashistoocool.github.io/projects/">All projects</a>
         <a id="footDocs" href="../README.md">Documentation</a>
         <a id="footRepo" href="#">Source</a>
         <a href="#method">Methodology</a>
