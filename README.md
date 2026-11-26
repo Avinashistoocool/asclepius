@@ -20,6 +20,11 @@ in your browser.
 
 ## Documentation
 
+**Documentation home:** <https://avinashistoocool.github.io/asclepius/documentation/> —
+start here for the project overview, getting started, field-to-flight guides,
+technical reports and citation details. The interactive planner remains at the
+[site root](https://avinashistoocool.github.io/asclepius/).
+
 | Document | PDF | Source |
 | --- | --- | --- |
 | Planner site (interactive) | <https://avinashistoocool.github.io/asclepius/> | [`docs/`](docs/) |

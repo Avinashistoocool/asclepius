@@ -257,7 +257,7 @@ footer{background:#000;position:relative;overflow:hidden;padding:110px 40px 36px
       <a class="navlink" href="https://avinashistoocool.github.io/">&larr; avinash</a>
       <a class="navlink" href="https://avinashistoocool.github.io/projects/">All projects</a>
       <span class="tag" id="sysTag"><i></i><span id="sysText">System idle</span></span>
-      <a class="btn white" id="repoLink" href="../README.md">Read the docs</a>
+      <a class="btn white" id="repoLink" href="documentation/">Read the docs</a>
     </div>
   </nav>
 
@@ -442,7 +442,7 @@ footer{background:#000;position:relative;overflow:hidden;padding:110px 40px 36px
       <div class="links">
         <a href="https://avinashistoocool.github.io/">&larr; avinash</a>
         <a href="https://avinashistoocool.github.io/projects/">All projects</a>
-        <a id="footDocs" href="../README.md">Documentation</a>
+        <a id="footDocs" href="documentation/">Documentation</a>
         <a id="footRepo" href="#">Source</a>
         <a href="#method">Methodology</a>
         <a href="#lab">Lab</a>
@@ -643,12 +643,11 @@ function tick(now){
   if(data&&playing&&now-last>90){frame=(frame+1)%data.methods.mat.frames.length;$("time").value=frame;last=now;draw();}
   requestAnimationFrame(tick);
 }
-// On GitHub Pages (user.github.io/repo/...) link to github.com; elsewhere use relative files.
+// On GitHub Pages (user.github.io/repo/...) link source controls to github.com.
 (()=>{const host=location.hostname.match(/^([^.]+)\.github\.io$/i);if(!host)return;
   const parts=location.pathname.split("/").filter(Boolean);if(parts.length&&/\.html?$/i.test(parts[parts.length-1]))parts.pop();
   const repo=parts.shift();if(!repo)return;
   const base=`https://github.com/${host[1]}/${repo}`;
-  for(const id of ["repoLink","footDocs"])$(id).href=`${base}#readme`;
   for(const id of ["footRepo","socialGh"])$(id).href=base;})();
 let worker=null,cancel=null;
 function compute(body){
