@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Asclepius field-to-flight guide: where to start with planning, mission export, SITL and swarm telemetry.">
+<link rel="canonical" href="https://avinashistoocool.github.io/asclepius/guide/">
+<title>Field-to-flight guide / Asclepius</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark;--lime:#ccff00;--line:#303030;--muted:#aaa}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:#000;color:#ebebeb;font:16px/1.65 "Space Grotesk",sans-serif}
+a{color:var(--lime);text-underline-offset:.2em}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--lime);outline-offset:4px}
+.shell{max-width:1280px;min-height:calc(100vh - 32px);margin:auto;border:1px solid var(--line);border-radius:2rem;background:#0c0c0c;overflow:hidden}
+header,footer{display:flex;align-items:center;justify-content:space-between;gap:1.5rem;flex-wrap:wrap;padding:1.5rem clamp(1.25rem,5vw,4rem);border-bottom:1px solid var(--line)}
+.brand{display:inline-flex;align-items:center;gap:.75rem;color:#ebebeb;font-size:1.15rem;font-weight:600;text-decoration:none}
+.brand span{display:grid;place-items:center;width:2.5rem;height:2.5rem;border-radius:.7rem;background:var(--lime);color:#000;font:700 1.1rem "JetBrains Mono",monospace}
+nav{display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap;font-size:.88rem}
+nav a{color:var(--muted);text-decoration:none}
+nav a:hover,nav a[aria-current]{color:var(--lime)}
+main{max-width:1000px;padding:3rem clamp(1.25rem,5vw,4rem) 5rem}
+.eyebrow{font:500 .68rem "JetBrains Mono",monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--lime)}
+h1,h2,h3{letter-spacing:-.05em;line-height:1.15}
+h1{font-size:clamp(2.8rem,6vw,5rem);margin:.65rem 0 1.25rem}
+h2{font-size:clamp(1.9rem,3vw,2.7rem);margin:0 0 1rem}
+h3{font-size:1.25rem;margin:0 0 .45rem}
+p{margin:.5rem 0 1.2rem}
+.intro{max-width:700px;color:var(--muted);font-size:1.15rem}
+.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:1.5rem}
+.card{padding:1.4rem;border:1px solid var(--line);border-radius:1.25rem;background:#141414}
+.card p{color:var(--muted);font-size:.92rem}
+section{padding:2.5rem 0;border-top:1px solid var(--line)}
+ol{padding-left:1.5rem}
+li{margin:.75rem 0}
+code{font:.86em "JetBrains Mono",monospace;color:var(--lime)}
+.note{padding:1rem 1.25rem;border-left:3px solid var(--lime);background:#171b10}
+.note p{margin:0}
+footer{border-top:1px solid var(--line);border-bottom:0;font-size:.83rem;color:var(--muted)}
+footer a{color:var(--muted)}
+@media(max-width:580px){body{padding:8px}.shell{min-height:calc(100vh - 16px);border-radius:1.25rem}.cards{grid-template-columns:1fr}nav{gap:.65rem 1rem}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <a class="brand" href="../"><span>A</span>Asclepius</a>
+    <nav aria-label="Project links">
+      <a href="../">Home</a>
+      <a href="./" aria-current="page">Field-to-flight guide</a>
+      <a href="../planner/">Interactive planner</a>
+      <a href="../papers/Asclepius_Technical_Report.pdf">Technical report (PDF)</a>
+      <a href="https://github.com/Avinashistoocool/asclepius">Source</a>
+      <a href="https://avinashistoocool.github.io/projects/">All projects</a>
+    </nav>
+  </header>
+  <main>
+    <span class="eyebrow">NIDAR RescueSwarm / guide</span>
+    <h1>From field boundary<br>to flight plan.</h1>
+    <p class="intro">Start in the interactive planner to explore coverage methods. For operational missions, work from a repository checkout and follow the field-to-flight manual; this page is a map to the canonical instructions, not a substitute for its safety checks.</p>
+    <section>
+      <span class="eyebrow">01 / explore</span>
+      <h2>Compare coverage plans</h2>
+      <p>Use the <a href="../planner/">browser planner</a> to draw or choose a shape, configure drones and camera field of view, and compare the medial-axis/chord, lawnmower, harmonic and geodesic plans. This demo runs locally in your browser and does not export or upload missions.</p>
+    </section>
+    <section>
+      <span class="eyebrow">02 / prepare</span>
+      <h2>Generate missions locally</h2>
+      <ol>
+        <li>Clone the <a href="https://github.com/Avinashistoocool/asclepius">repository</a>. From <code>swarm_lab/</code>, install the project dependencies with <code>py -m pip install -r requirements.txt</code>.</li>
+        <li>Draw a field boundary as KML/KMZ or a Mission Planner <code>.poly</code> file. Follow the <a href="https://github.com/Avinashistoocool/asclepius/blob/main/swarm_lab/MANUAL.md">field-to-flight manual</a> for field selection, launch coordinates, first-flight test mode, and the complete operational checklist.</li>
+        <li>Use the <a href="https://github.com/Avinashistoocool/asclepius/blob/main/swarm_lab/ARDUPILOT.md">ArduPilot export reference</a> for mission generation, waypoint output, geofences, and optional MAVLink upload and read-back.</li>
+      </ol>
+      <div class="note"><p><strong>Rehearse before flight:</strong> inspect the generated plan, run SITL, and use the manual's pre-flight checks and safety-pilot procedures. The browser comparison does not control aircraft.</p></div>
+    </section>
+    <section>
+      <span class="eyebrow">03 / monitor</span>
+      <h2>Follow the swarm</h2>
+      <p>The <a href="https://github.com/Avinashistoocool/asclepius/blob/main/swarm_lab/DASHBOARD.md">telemetry dashboard guide</a> explains how to monitor tracks, per-drone status and alerts alongside Mission Planner, which remains the primary ground control station.</p>
+      <div class="cards">
+        <div class="card"><h3>Complete workflow</h3><p>Field drawing through mission review, SITL, upload, flight and landing.</p><a href="https://github.com/Avinashistoocool/asclepius/blob/main/swarm_lab/MANUAL.md">Read the field-to-flight manual &rarr;</a></div>
+        <div class="card"><h3>Technical background</h3><p>Planning algorithms, architecture and flight interfaces.</p><a href="../papers/Asclepius_Technical_Report.pdf">Read the technical report (PDF) &rarr;</a></div>
+      </div>
+    </section>
+  </main>
+  <footer><span>&copy; 2026 Team Asclepius &middot; NIDAR RescueSwarm</span><span><a href="../">Home</a> &middot; <a href="../planner/">Interactive planner</a> &middot; <a href="https://avinashistoocool.github.io/projects/">All projects</a></span></footer>
+</div>
+</body>
+</html>

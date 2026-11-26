@@ -10,24 +10,24 @@ fleet management, and onboard person detection.
 | [`swarm_lab/ARDUPILOT.md`](swarm_lab/ARDUPILOT.md) | **Fly it:** KML/KMZ/.poly ? per-drone ArduCopter `.waypoints` (takeoff, synced speeds, camera trigger distance, RTL) + optional pymavlink upload with read-back |
 | [`swarm_lab/DASHBOARD.md`](swarm_lab/DASHBOARD.md) | **Watch it:** live multi-drone telemetry dashboard (map, per-drone cards, alerts, RTL/LOITER buttons, tlogs) |
 | `Fleet_manager.py` | Fleet/lane assignment, camera parameters, and delivery-drone dispatch |
-| `docs/` | GitHub Pages version of the comparison page. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |
+| `docs/` | GitHub Pages documentation home, guide, and interactive planner at `docs/planner/`. A pure JS port (`planner.js`, `medial.js`, `nadir.js`) checked against the Python planners by `node docs/verify.mjs` |
 | [`paper/`](paper/) | Coverage theory paper ([LaTeX](paper/coverage_theory.tex), [Markdown](paper/coverage_theory.md), [PDF](https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf)): the mathematics, the solvers that failed and why, and the method in use. Includes equation checks (`verify_derivations.py`), figures (`figures.py`) and tables (`results.py`). Also the software [technical report](paper/Asclepius_Technical_Report.tex) ([PDF](https://avinashistoocool.github.io/asclepius/papers/Asclepius_Technical_Report.pdf)) |
 | `NIDAR_YOLO.py` | YOLO-World open-vocabulary detection (`person`, `tree`, ...) |
 | `weights/`, `yolov8s-worldv2.pt` | Model weights (Git LFS) |
 
-**Live comparison page:** <https://avinashistoocool.github.io/asclepius/>. It runs entirely
+**Live comparison page:** <https://avinashistoocool.github.io/asclepius/planner/>. It runs entirely
 in your browser.
 
 ## Documentation
 
-**Documentation home:** <https://avinashistoocool.github.io/asclepius/documentation/> —
+**Documentation home:** <https://avinashistoocool.github.io/asclepius/> —
 start here for the project overview, getting started, field-to-flight guides,
-technical reports and citation details. The interactive planner remains at the
-[site root](https://avinashistoocool.github.io/asclepius/).
+technical reports and citation details. The [interactive planner](https://avinashistoocool.github.io/asclepius/planner/)
+is at `/planner/`; the PDFs remain at their existing `/papers/` URLs.
 
 | Document | PDF | Source |
 | --- | --- | --- |
-| Planner site (interactive) | <https://avinashistoocool.github.io/asclepius/> | [`docs/`](docs/) |
+| Planner site (interactive) | <https://avinashistoocool.github.io/asclepius/planner/> | [`docs/planner/`](docs/planner/) |
 | Coverage theory paper: *Chord-Bisecting Trajectories and Arrival-Time Sweeps for Nadir-Camera Drone Swarms* | [coverage_theory.pdf](https://avinashistoocool.github.io/asclepius/papers/coverage_theory.pdf) | [`paper/coverage_theory.tex`](paper/coverage_theory.tex) |
 | Technical report: software architecture, fleet management, detection, flight interfaces and safety | [Asclepius_Technical_Report.pdf](https://avinashistoocool.github.io/asclepius/papers/Asclepius_Technical_Report.pdf) | [`paper/Asclepius_Technical_Report.tex`](paper/Asclepius_Technical_Report.tex) |
 
@@ -39,7 +39,7 @@ To rebuild them, run `pdflatex` twice on each `.tex` file from inside `paper/`.
 | Area | State |
 | --- | --- |
 | Coverage planner (`swarm_lab/`) | Working. Four planners; 100% nadir coverage on every test field; 8 unit tests pass |
-| Browser demo (`docs/`) | Live on GitHub Pages, Obsidian & Lime UI, runs in a Web Worker in 0.8?2.3 s |
+| Browser demo (`docs/planner/`) | Runs on GitHub Pages, Obsidian & Lime UI, in a Web Worker in 0.8?2.3 s |
 | Technical report (`paper/`) | LaTeX + Markdown, 4 figures, 2 result tables, 8/8 equation checks pass |
 | Exact chord-bisecting trajectory | Solved for convex fields and symmetric presets; shown not to exist in general for strongly non-convex fields (see the report) |
 | ArduPilot export | `ardupilot_export.py`: Mission Planner `.waypoints` per drone, KML preview, MAVLink upload verified against simulated vehicles |
@@ -233,7 +233,7 @@ py paper/results.py              # result tables
 ```
 
 The server streams NDJSON progress events, and both pages show a live progress bar.
-The [GitHub Pages version](https://avinashistoocool.github.io/asclepius/) runs the same
+The [GitHub Pages version](https://avinashistoocool.github.io/asclepius/planner/) runs the same
 pipeline in the browser with no server.
 
 ### `swarm_lab/` files
